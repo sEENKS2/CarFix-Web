@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
+import api from '../api/axiosClient';
 import { facturasService } from '../api/facturasService';
-import ComprobanteFacturaModal from '../components/ComprobanteFacturaModal';
 import { 
   RefreshCw, 
   Receipt, 
@@ -8,18 +8,19 @@ import {
   Ban, 
   Eye, 
   X, 
-  Printer,
+  FileText,
   FileSpreadsheet
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { exportToCsv } from '../utils/exportUtils';
+import { generarPdfFactura } from '../utils/pdfGenerator';
 
 export default function Facturacion() {
   const [facturas, setFacturas] = useState([]);
+  const [tickets, setTickets] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState('Todos');
   const [facturaSeleccionada, setFacturaSeleccionada] = useState(null);
-  const [facturaImprimir, setFacturaImprimir] = useState(null);
   const [modalCobro, setModalCobro] = useState(null);
   const [montoPago, setMontoPago] = useState('');
   const [metodoPago, setMetodoPago] = useState('Efectivo');
@@ -32,11 +33,15 @@ export default function Facturacion() {
     Anulada: { label: 'Anulada', bg: '#f1f5f9', text: '#64748b', border: '#cbd5e1' }
   };
 
-  const cargarFacturas = async (mostrarToast = false) => {
+  const cargarDatos = async (mostrarToast = false) => {
     try {
       setCargando(true);
-      const res = await facturasService.obtenerTodas();
-      setFacturas(res.data || []);
+      const [resFacturas, resTickets] = await Promise.all([
+        facturasService.obtenerTodas(),
+        api.get('/tickets').catch(() => ({ data: [] }))
+      ]);
+      setFacturas(resFacturas.data || []);
+      setTickets(resTickets.data || []);
       if (mostrarToast) {
         toast.success('Facturación y cobranzas actualizadas');
       }
@@ -48,7 +53,7 @@ export default function Facturacion() {
   };
 
   useEffect(() => {
-    cargarFacturas();
+    cargarDatos();
   }, []);
 
   const abrirModalCobro = (fac) => {
@@ -70,7 +75,7 @@ export default function Facturacion() {
       });
       toast.success(`Cobro de $${parseFloat(montoPago).toLocaleString('es-AR')} asentado con éxito`);
       setModalCobro(null);
-      cargarFacturas();
+      cargarDatos();
     } catch (err) {
       const msg = err.response?.data?.mensaje || err.response?.data || 'Error al procesar el cobro';
       toast.error(msg);
@@ -84,11 +89,17 @@ export default function Facturacion() {
     try {
       await facturasService.anularFactura(id, motivo);
       toast.success('Comprobante anulado exitosamente');
-      cargarFacturas();
+      cargarDatos();
     } catch (err) {
       const msg = err.response?.data?.mensaje || err.response?.data || 'No se pudo anular la factura';
       toast.error(msg);
     }
+  };
+
+  const handleDescargarPdf = (fac) => {
+    const ticketAsociado = tickets.find(t => t.id === fac.ticketId) || null;
+    generarPdfFactura(fac, ticketAsociado);
+    toast.success(`PDF generado para Factura ${fac.numeroFactura}`);
   };
 
   const facturasFiltradas = facturas.filter((f) => {
@@ -148,7 +159,7 @@ export default function Facturacion() {
           <button onClick={handleExportarExcel} className="btn-secondary" title="Descargar reporte en formato Excel / CSV">
             <FileSpreadsheet size={15} color="#059669" /> Exportar a Excel
           </button>
-          <button onClick={() => cargarFacturas(true)} className="btn-secondary">
+          <button onClick={() => cargarDatos(true)} className="btn-secondary">
             <RefreshCw size={15} /> Refrescar
           </button>
         </div>
@@ -205,7 +216,7 @@ export default function Facturacion() {
                   <th style={{ textAlign: 'right' }}>Total</th>
                   <th style={{ textAlign: 'right' }}>Saldo Pendiente</th>
                   <th>Estado</th>
-                  <th style={{ textAlign: 'center' }}>Acciones</th>
+                  <th style={{ textAlign: 'center', width: '220px' }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -254,6 +265,14 @@ export default function Facturacion() {
                             <Eye size={14} /> Detalle
                           </button>
 
+                          <button 
+                            onClick={() => handleDescargarPdf(fac)}
+                            className="btn-icon-action"
+                            title="Descargar Comprobante Oficial en PDF"
+                          >
+                            <FileText size={14} color="#0284c7" /> PDF
+                          </button>
+
                           {fac.estado !== 'Pagada' && fac.estado !== 'Anulada' && (
                             <button
                               onClick={() => abrirModalCobro(fac)}
@@ -274,14 +293,6 @@ export default function Facturacion() {
                               <Ban size={14} /> Anular
                             </button>
                           )}
-
-                          <button 
-                            onClick={() => setFacturaImprimir(fac)}
-                            className="btn-icon-action"
-                            title="Generar e imprimir comprobante / PDF"
-                          >
-                            <Printer size={14} /> Comprobante
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -428,7 +439,15 @@ export default function Facturacion() {
                 </div>
               )}
 
-              <div className="modal-actions">
+              <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+                <button 
+                  type="button"
+                  onClick={() => handleDescargarPdf(facturaSeleccionada)}
+                  className="btn-secondary"
+                  style={{ color: '#0284c7', borderColor: '#bae6fd' }}
+                >
+                  <FileText size={14} /> Descargar Comprobante PDF
+                </button>
                 <button onClick={() => setFacturaSeleccionada(null)} className="btn-secondary">
                   Cerrar
                 </button>
@@ -436,13 +455,6 @@ export default function Facturacion() {
             </div>
           </div>
         </div>
-      )}
-
-      {facturaImprimir && (
-        <ComprobanteFacturaModal 
-          factura={facturaImprimir} 
-          alCerrar={() => setFacturaImprimir(null)} 
-        />
       )}
     </div>
   );

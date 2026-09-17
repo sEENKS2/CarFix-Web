@@ -17,12 +17,14 @@ import {
   FileSpreadsheet,
   AlertTriangle,
   DollarSign,
-  Search
+  Search,
+  FileText
 } from 'lucide-react';
 import ModalFacturarTicket from '../components/ModalFacturarTicket';
 import { toast } from 'sonner';
 import { exportToCsv } from '../utils/exportUtils';
 import Pagination from '../components/Pagination';
+import { generarPdfRemitoIngreso } from '../utils/pdfGenerator';
 
 export default function Tickets() {
   const { tieneRol } = useAuth();
@@ -378,7 +380,7 @@ export default function Tickets() {
                   <th style={{ width: '18%' }}>Mecánico</th>
                   <th>Falla Reportada</th>
                   <th style={{ width: '150px' }}>Estado</th>
-                  <th style={{ width: '150px', textAlign: 'center' }}>Acciones</th>
+                  <th style={{ width: '210px', textAlign: 'center' }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -491,6 +493,17 @@ export default function Tickets() {
                             title="Ver detalle completo"
                           >
                             <Eye size={13} /> Detalle
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              generarPdfRemitoIngreso(t);
+                              toast.success(`Remito de Ingreso generado para Ticket #${t.id}`);
+                            }}
+                            className="btn-icon-action"
+                            title="Descargar Remito de Recepción (Check-in con firma)"
+                          >
+                            <FileText size={13} color="#0284c7" /> Remito
                           </button>
 
                           {esFacturable && puedeCrearOEliminar && (
@@ -728,7 +741,18 @@ export default function Tickets() {
                 )}
               </div>
 
-              <div className="modal-actions" style={{ marginTop: '0.5rem' }}>
+              <div className="modal-actions" style={{ marginTop: '0.5rem', justifyContent: 'space-between' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    generarPdfRemitoIngreso(ticketSeleccionado);
+                    toast.success(`Remito generado para Ticket #${ticketSeleccionado.id}`);
+                  }}
+                  className="btn-secondary"
+                  style={{ color: '#0284c7', borderColor: '#bae6fd' }}
+                >
+                  <FileText size={14} /> Descargar Remito de Ingreso
+                </button>
                 <button onClick={() => setTicketSeleccionado(null)} className="btn-secondary">
                   Cerrar
                 </button>

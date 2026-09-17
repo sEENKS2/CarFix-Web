@@ -92,19 +92,7 @@ export default function ClientesVehiculos() {
     setPaginaActual(1);
   }, [busqueda, tabActiva]);
 
-  if (!tieneAccesoGeneral) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', textAlign: 'center' }}>
-        <ShieldAlert size={64} color="#ef4444" />
-        <h2 style={{ marginTop: '1rem', fontSize: '1.5rem', color: '#0f172a' }}>Acceso Restringido</h2>
-        <p style={{ color: '#64748b', marginTop: '0.5rem', maxWidth: '400px' }}>
-          Tu perfil técnico no cuenta con permisos para gestionar el padrón de clientes y vehículos.
-        </p>
-      </div>
-    );
-  }
-
-  // Mapa de deuda por cliente: { [clienteId]: { saldoTotal: number, facturas: [] } }
+  // Mapa de deuda por cliente (Hooks siempre arriba de los returns)
   const mapaDeudaClientes = useMemo(() => {
     const mapa = {};
 
@@ -112,7 +100,6 @@ export default function ClientesVehiculos() {
       if (f.estado === 'Anulada') return;
       const saldo = Number(f.saldoPendiente || 0);
 
-      // Vincular cliente: puede venir directo en f.clienteId o deducirse del ticket asociado
       let clienteId = f.clienteId;
       if (!clienteId && f.ticketId) {
         const t = tickets.find(x => x.id === f.ticketId);
@@ -133,7 +120,6 @@ export default function ClientesVehiculos() {
     return mapa;
   }, [facturas, tickets]);
 
-  // Filtrado reactivo
   const clientesFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     if (!q) return clientes;
@@ -158,10 +144,24 @@ export default function ClientesVehiculos() {
   }, [vehiculos, busqueda]);
 
   const listaActiva = tabActiva === 'clientes' ? clientesFiltrados : vehiculosFiltrados;
+  
   const itemsPaginados = useMemo(() => {
     const inicio = (paginaActual - 1) * itemsPorPagina;
     return listaActiva.slice(inicio, inicio + itemsPorPagina);
   }, [listaActiva, paginaActual]);
+
+  // Early return por permisos colocado DESPUÉS de todos los Hooks
+  if (!tieneAccesoGeneral) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', textAlign: 'center' }}>
+        <ShieldAlert size={64} color="#ef4444" />
+        <h2 style={{ marginTop: '1rem', fontSize: '1.5rem', color: '#0f172a' }}>Acceso Restringido</h2>
+        <p style={{ color: '#64748b', marginTop: '0.5rem', maxWidth: '400px' }}>
+          Tu perfil técnico no cuenta con permisos para gestionar el padrón de clientes y vehículos.
+        </p>
+      </div>
+    );
+  }
 
   const handleSubmitCliente = async (e) => {
     e.preventDefault();
@@ -389,7 +389,6 @@ export default function ClientesVehiculos() {
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                          {/* Ver Estado de Cuenta */}
                           <button
                             onClick={() => setClienteCuentaCorriente({ cliente: c, ...datosDeuda })}
                             className="btn-ghost-icon"
@@ -487,7 +486,7 @@ export default function ClientesVehiculos() {
         />
       </div>
 
-      {/* MODAL DE CUENTA CORRIENTE / RESUMEN DE DEUDA */}
+      {/* MODAL DE CUENTA CORRIENTE */}
       {clienteCuentaCorriente && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: '580px' }}>
