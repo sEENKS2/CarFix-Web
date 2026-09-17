@@ -136,7 +136,10 @@ export default function Auditoria() {
                   || '—';
 
                 return (
-                  <tr key={r.id || idx} style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                  <tr 
+                    key={`${r.modulo || r.entidad || 'aud'}-${r.id ?? 'row'}-${idx}`}
+                    style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}
+                  >
                     <td style={styles.td}>
                       <div style={styles.cellFlex}>
                         <Calendar size={14} color="#64748b" />

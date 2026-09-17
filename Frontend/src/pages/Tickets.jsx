@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../api/axiosClient';
 import { useAuth } from '../context/AuthContext';
-import { Plus, RefreshCw, X, Wrench, Eye, Calendar, User, Car, Clock, History, Edit } from 'lucide-react';
+import { Plus, RefreshCw, X, Wrench, Eye, Calendar, User, Car, Clock, History, Edit, Receipt } from 'lucide-react';
+import ModalFacturarTicket from '../components/ModalFacturarTicket';
 
 export default function Tickets() {
   const { tieneRol } = useAuth();
@@ -16,6 +17,9 @@ export default function Tickets() {
   const [tecnicos, setTecnicos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Modal Facturacion
+  const [ticketParaFacturar, setTicketParaFacturar] = useState(null);
 
   // Modal Detalle Completo & Historial
   const [ticketSeleccionado, setTicketSeleccionado] = useState(null);
@@ -220,6 +224,8 @@ export default function Tickets() {
                   ? `${t.cliente.nombre} ${t.cliente.apellido || ''}`.trim()
                   : (t.nombreCompletoCliente || 'Sin cliente');
 
+                const esFacturable = estadoId >= 3; // 3: Finalizado, 4: Entregado
+
                 return (
                   <tr key={t.id} style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
                     <td style={styles.td}><strong>#{t.id}</strong></td>
@@ -272,6 +278,16 @@ export default function Tickets() {
                       >
                         <Eye size={14} /> Detalle
                       </button>
+
+                      {esFacturable && puedeCrearOEliminar && (
+                        <button
+                          onClick={() => setTicketParaFacturar(t)}
+                          style={styles.btnInvoice}
+                          title="Emitir Factura"
+                        >
+                          <Receipt size={14} /> Facturar
+                        </button>
+                      )}
 
                       {puedeCrearOEliminar && (
                         <button
@@ -522,6 +538,18 @@ export default function Tickets() {
           </div>
         </div>
       )}
+
+      {/* MODAL FACTURAR TICKET */}
+      {ticketParaFacturar && (
+        <ModalFacturarTicket
+          ticket={ticketParaFacturar}
+          alCerrar={() => setTicketParaFacturar(null)}
+          alFacturarExitoso={() => {
+            alert('Factura emitida con éxito.');
+            cargarDatos();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -534,6 +562,7 @@ const styles = {
   btnPrimary: { display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' },
   btnSecondary: { display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 0.9rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' },
   btnDetail: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#ffffff', color: '#0284c7', border: '1px solid #bae6fd', padding: '0.35rem 0.65rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' },
+  btnInvoice: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '0.35rem 0.65rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' },
   actionBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: '0.35rem' },
   card: { backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.07)', overflow: 'hidden' },
   error: { padding: '0.75rem 1rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.875rem' },

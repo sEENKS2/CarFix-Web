@@ -11,6 +11,8 @@ import Auditoria from './pages/Auditoria';
 import ClientesVehiculos from './pages/ClientesVehiculos';
 import SeguridadUsuarios from './pages/SeguridadUsuarios';
 import Tecnicos from './pages/Tecnicos';
+import Facturacion from './pages/Facturacion';
+import Inventario from './pages/Inventario';
 
 function RutaPrivada({ children }) {
   const token = localStorage.getItem('token');
@@ -42,6 +44,8 @@ export default function App() {
             <Route path="tecnicos" element={<Tecnicos />} />
             <Route path="clientes-vehiculos" element={<ClientesVehiculos />} />
             <Route path="usuarios" element={<SeguridadUsuarios />} />
+            <Route path="facturacion" element={<Facturacion />} />
+            <Route path="inventario" element={<Inventario />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

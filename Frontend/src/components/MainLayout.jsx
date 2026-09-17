@@ -11,37 +11,63 @@ import {
   UserCircle2,
   Car,
   Lock,
-  Users
+  Users,
+  Receipt,
+  ArrowLeftRight
 } from 'lucide-react';
 
 export default function MainLayout() {
   const navigate = useNavigate();
   const { user, logout, tieneRol } = useAuth();
   
-  // Tomamos el nombre del usuario desde el contexto
   const usuario = user?.nombreUsuario || user?.usuario || 'Operador';
 
   const handleLogout = () => {
-    logout(); // Limpia el localStorage y el estado global
+    logout();
     navigate('/login', { replace: true });
   };
 
-  // Definimos a qué roles está permitida cada ruta
-  // Un arreglo vacío [] significa que SOLO el Administrador (por el bypass) puede verla
-  const todasLasRutas = [
-    { to: '/dashboard', label: 'Panel / Métricas', icon: <TrendingUp size={18} />, roles: ['Operadores'] },
-    { to: '/tickets', label: 'Tickets de Taller', icon: <Wrench size={18} />, roles: ['Operadores', 'Tecnicos'] },
-    { to: '/clientes-vehiculos', label: 'Clientes y Vehículos', icon: <Car size={18} />, roles: ['Operadores'] },
-    { to: '/tecnicos', label: 'Equipo Técnico', icon: <Users size={18} />, roles: ['Operadores'] },
-    { to: '/productos', label: 'Productos / Stock', icon: <Package size={18} />, roles: ['Operadores', 'Tecnicos'] },
-    { to: '/proveedores', label: 'Proveedores', icon: <Truck size={18} />, roles: ['Operadores'] },
-    { to: '/ordenes-compra', label: 'Órdenes de Compra', icon: <ShoppingCart size={18} />, roles: ['Operadores'] },
-    { to: '/usuarios', label: 'Usuarios / Seguridad', icon: <Lock size={18} />, roles: [] },
-    { to: '/auditoria', label: 'Auditoría', icon: <ShieldCheck size={18} />, roles: [] },
+  const seccionesMenu = [
+    {
+      titulo: 'GENERAL',
+      items: [
+        { to: '/dashboard', label: 'Panel / Métricas', icon: <TrendingUp size={18} />, roles: ['Operadores'] },
+      ]
+    },
+    {
+      titulo: 'TALLER',
+      items: [
+        { to: '/tickets', label: 'Tickets de Taller', icon: <Wrench size={18} />, roles: ['Operadores', 'Tecnicos'] },
+        { to: '/clientes-vehiculos', label: 'Clientes y Vehículos', icon: <Car size={18} />, roles: ['Operadores'] },
+        { to: '/tecnicos', label: 'Equipo Técnico', icon: <Users size={18} />, roles: ['Operadores'] },
+      ]
+    },
+    {
+      titulo: 'STOCK Y COMPRAS',
+      items: [
+        { to: '/productos', label: 'Catálogo de Repuestos', icon: <Package size={18} />, roles: ['Operadores', 'Tecnicos'] },
+        { to: '/inventario', label: 'Control de Stock', icon: <ArrowLeftRight size={18} />, roles: ['Operadores'] },
+        { to: '/ordenes-compra', label: 'Órdenes de Compra', icon: <ShoppingCart size={18} />, roles: ['Operadores'] },
+        { to: '/proveedores', label: 'Proveedores', icon: <Truck size={18} />, roles: ['Operadores'] },
+      ]
+    },
+    {
+      titulo: 'ADMINISTRACIÓN',
+      items: [
+        { to: '/facturacion', label: 'Facturación y Cobranzas', icon: <Receipt size={18} />, roles: ['Operadores'] },
+        { to: '/usuarios', label: 'Usuarios / Seguridad', icon: <Lock size={18} />, roles: [] },
+        { to: '/auditoria', label: 'Auditoría', icon: <ShieldCheck size={18} />, roles: [] },
+      ]
+    }
   ];
 
-  // Filtramos el menú para mostrar solo lo que el usuario logueado tiene permitido
-  const navItems = todasLasRutas.filter(item => tieneRol(item.roles));
+  // Filtra los ítems según permisos del usuario y omite secciones vacías
+  const seccionesFiltradas = seccionesMenu
+    .map(seccion => ({
+      ...seccion,
+      items: seccion.items.filter(item => tieneRol(item.roles))
+    }))
+    .filter(seccion => seccion.items.length > 0);
 
   return (
     <div style={styles.container}>
@@ -55,21 +81,28 @@ export default function MainLayout() {
         </div>
 
         <nav style={styles.nav}>
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              style={({ isActive }) => ({
-                ...styles.navLink,
-                backgroundColor: isActive ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
-                color: isActive ? '#38bdf8' : '#94a3b8',
-                fontWeight: isActive ? '600' : '500',
-                borderLeft: isActive ? '3px solid #38bdf8' : '3px solid transparent',
-              })}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </NavLink>
+          {seccionesFiltradas.map((seccion, idx) => (
+            <div key={idx} style={styles.sectionGroup}>
+              <span style={styles.sectionTitle}>{seccion.titulo}</span>
+              <div style={styles.itemsList}>
+                {seccion.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    style={({ isActive }) => ({
+                      ...styles.navLink,
+                      backgroundColor: isActive ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
+                      color: isActive ? '#38bdf8' : '#94a3b8',
+                      fontWeight: isActive ? '600' : '500',
+                      borderLeft: isActive ? '3px solid #38bdf8' : '3px solid transparent',
+                    })}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
       </aside>
@@ -102,8 +135,11 @@ const styles = {
   brand: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1.5rem 1.25rem', borderBottom: '1px solid #1e293b' },
   brandIcon: { backgroundColor: '#0284c7', padding: '0.5rem', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   brandName: { fontSize: '1.25rem', fontWeight: '700', color: '#ffffff', letterSpacing: '-0.025em' },
-  nav: { display: 'flex', flexDirection: 'column', gap: '0.25rem', padding: '1rem 0.75rem' },
-  navLink: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', borderRadius: '6px', textDecoration: 'none', fontSize: '0.9rem', transition: 'all 0.15s ease' },
+  nav: { display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem 0.75rem', overflowY: 'auto' },
+  sectionGroup: { display: 'flex', flexDirection: 'column', gap: '0.2rem' },
+  sectionTitle: { fontSize: '0.65rem', fontWeight: '700', color: '#475569', letterSpacing: '0.08em', padding: '0 0.75rem', marginBottom: '0.25rem' },
+  itemsList: { display: 'flex', flexDirection: 'column', gap: '0.2rem' },
+  navLink: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 0.85rem', borderRadius: '6px', textDecoration: 'none', fontSize: '0.875rem', transition: 'all 0.15s ease' },
   mainWrapper: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
   topbar: { height: '64px', backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 2rem' },
   userBadge: { display: 'flex', alignItems: 'center', gap: '0.5rem' },

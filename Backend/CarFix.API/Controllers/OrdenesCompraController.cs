@@ -45,7 +45,8 @@ namespace CarFix.API.Controllers
             }
             catch (Exception ex)
             {
-                return BadRequest($"Error al crear orden de compra: {ex.Message}");
+                var detalle = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                return BadRequest($"Error al crear orden de compra: {detalle}");
             }
         }
 
@@ -73,7 +74,8 @@ namespace CarFix.API.Controllers
             }
             catch (Exception ex)
             {
-                return BadRequest($"Error al actualizar estado de la orden: {ex.Message}");
+                var detalle = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                return BadRequest($"Error al actualizar estado de la orden: {detalle}");
             }
         }
 
