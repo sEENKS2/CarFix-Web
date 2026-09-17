@@ -52,7 +52,8 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // 3. Autenticación JWT
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "CarFixSuperSecretaClaveParaElProyectoFinal2026";
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("Falta configurar Jwt:Key");
 var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>c157c64f-1dcc-409a-a11a-548452248385</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,9 +15,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\Audoglio\FINAL ANALISTA\2da iteracion\CarFix-DIPLOMA\Controladora\Controladora.csproj" />
-    <ProjectReference Include="..\..\..\Audoglio\FINAL ANALISTA\2da iteracion\CarFix-DIPLOMA\Entidades\Entidades.csproj" />
-    <ProjectReference Include="..\..\..\Audoglio\FINAL ANALISTA\2da iteracion\CarFix-DIPLOMA\Modelo\Modelo.csproj" />
+    <ProjectReference Include="src\Controladora\Controladora.csproj" />
+    <ProjectReference Include="src\Entidades\Entidades.csproj" />
+    <ProjectReference Include="src\Modelo\Modelo.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="src\**\*.cs" />
+    <Content Remove="src\**" />
+    <EmbeddedResource Remove="src\**" />
+    <None Remove="src\**" />
   </ItemGroup>
 
 </Project>

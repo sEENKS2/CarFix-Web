@@ -9,6 +9,7 @@
 *.dbmdl
 *.dll
 *.pdb
+appsettings.json
 appsettings.Development.json
 appsettings.Local.json
 *.db

@@ -1,6 +1,6 @@
 <Solution>
-  <Project Path="../../Audoglio/FINAL ANALISTA/2da iteracion/CarFix-DIPLOMA/Controladora/Controladora.csproj" />
-  <Project Path="../../Audoglio/FINAL ANALISTA/2da iteracion/CarFix-DIPLOMA/Entidades/Entidades.csproj" />
-  <Project Path="../../Audoglio/FINAL ANALISTA/2da iteracion/CarFix-DIPLOMA/Modelo/Modelo.csproj" />
+  <Project Path="CarFix.API/src/Controladora/Controladora.csproj" />
+  <Project Path="CarFix.API/src/Entidades/Entidades.csproj" />
+  <Project Path="CarFix.API/src/Modelo/Modelo.csproj" />
   <Project Path="CarFix.API/CarFix.API.csproj" />
 </Solution>
