@@ -1,203 +1,398 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../api/axiosClient';
-import { useAuth } from '../context/AuthContext';
 import { 
   Wrench, 
-  ShoppingCart, 
   AlertTriangle, 
-  TrendingUp, 
-  Users, 
-  RefreshCw,
-  Award,
-  CalendarCheck,
-  ShieldAlert
+  DollarSign, 
+  CheckCircle2, 
+  Clock, 
+  RefreshCw, 
+  Package, 
+  ShoppingCart,
+  Users,
+  Award
 } from 'lucide-react';
+import { toast } from 'sonner';
+
+const MAPA_ESPECIALIDADES = {
+  1: 'Mecánico / Motorista',
+  2: 'Electricista',
+  3: 'Chapista',
+  4: 'Electrónico',
+  5: 'Alineación y Balanceo'
+};
+
+const esTicketFinalizado = (estado) => {
+  if (estado === null || estado === undefined) return false;
+  if (typeof estado === 'number') return estado >= 3;
+  const est = String(estado).trim().toLowerCase();
+  return est.includes('entregado') || est.includes('finalizado') || est.includes('terminado');
+};
 
 export default function Dashboard() {
-  const { tieneRol } = useAuth();
-  
-  // Validamos si el usuario puede acceder a la pantalla (Operador o Admin)
-  const tieneAccesoGeneral = tieneRol(['Operadores']);
-  // Validamos si el usuario tiene acceso financiero total (Solo Admin)
-  const esAdmin = tieneRol([]);
+  const [cargando, setCargando] = useState(true);
+  const [metricas, setMetricas] = useState({
+    facturacionMes: 0,
+    saldoPorCobrar: 0,
+    totalCompras: 0,
+    ticketsMes: 0,
+    ticketsAbiertos: 0,
+    mecanicoDestacado: 'Sin datos',
+    ticketsPorEstado: {},
+    tecnicosRanking: [],
+    stockCritico: [],
+    proveedoresRanking: []
+  });
 
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  const cargarMetricas = async () => {
-    if (!tieneAccesoGeneral) return;
-
-    setLoading(true);
-    setError('');
+  const cargarDatos = async (mostrarToast = false) => {
+    setCargando(true);
     try {
-      const res = await api.get('/reportes/dashboard');
-      setData(res.data);
+      const [resTickets, resFacturas, resProductos, resOrdenes, resTecnicos] = await Promise.all([
+        api.get('/tickets').catch(() => ({ data: [] })),
+        api.get('/facturas').catch(() => ({ data: [] })),
+        api.get('/productos').catch(() => ({ data: [] })),
+        api.get('/ordenescompra').catch(() => ({ data: [] })),
+        api.get('/tecnicos').catch(() => ({ data: [] }))
+      ]);
+
+      const tickets = resTickets.data || [];
+      const facturas = resFacturas.data || [];
+      const productos = resProductos.data || [];
+      const ordenes = resOrdenes.data || [];
+      const tecnicos = resTecnicos.data || [];
+
+      const ahora = new Date();
+      const mesActual = ahora.getMonth();
+      const anioActual = ahora.getFullYear();
+
+      // 1. Finanzas
+      const facturasActivas = facturas.filter(f => f.estado !== 'Anulada');
+      const facturacionMes = facturasActivas
+        .filter(f => {
+          const d = new Date(f.fechaEmision || f.fechaCreacion);
+          return d.getMonth() === mesActual && d.getFullYear() === anioActual;
+        })
+        .reduce((acc, f) => acc + (f.total || 0), 0);
+
+      const saldoPorCobrar = facturasActivas.reduce((acc, f) => acc + (f.saldoPendiente || 0), 0);
+
+      const totalCompras = ordenes
+        .filter(o => o.estado === 2 || o.estado === 'Recibida')
+        .reduce((acc, o) => acc + (o.total || 0), 0);
+
+      // 2. Taller y Tickets
+      const ticketsMes = tickets.filter(t => {
+        const d = new Date(t.fechaIngreso || t.fechaCreacion);
+        return d.getMonth() === mesActual && d.getFullYear() === anioActual;
+      }).length;
+
+      const ticketsAbiertos = tickets.filter(t => !esTicketFinalizado(t.estado) && String(t.estado).toLowerCase() !== 'cancelado').length;
+
+      const ticketsPorEstado = tickets.reduce((acc, t) => {
+        const est = t.estado || 'Pendiente';
+        acc[est] = (acc[est] || 0) + 1;
+        return acc;
+      }, {});
+
+      // 3. Stock Crítico
+      const stockCritico = productos
+        .filter(p => p.stockActual <= (p.stockMinimo || 5))
+        .slice(0, 5);
+
+      // 4. Rendimiento Técnicos
+      const tecnicosRanking = tecnicos.map(tec => {
+        const tecId = Number(tec.id);
+
+        const asignados = tickets.filter(t => {
+          const ticketTecId = Number(t.tecnicoId ?? t.idTecnico ?? t.tecnico?.id ?? 0);
+          return ticketTecId === tecId;
+        });
+
+        const finalizados = asignados.filter(t => esTicketFinalizado(t.estado)).length;
+        const ratio = asignados.length > 0 ? Math.round((finalizados / asignados.length) * 100) : 0;
+
+        let especialidadNombre = 'Mecánico';
+        if (tec.especialidadNombre) {
+          especialidadNombre = tec.especialidadNombre;
+        } else if (tec.especialidad && typeof tec.especialidad === 'object') {
+          especialidadNombre = tec.especialidad.nombre || tec.especialidad.descripcion || 'Mecánico';
+        } else if (MAPA_ESPECIALIDADES[tec.especialidad]) {
+          especialidadNombre = MAPA_ESPECIALIDADES[tec.especialidad];
+        } else if (typeof tec.especialidad === 'string' && isNaN(tec.especialidad)) {
+          especialidadNombre = tec.especialidad;
+        }
+
+        return {
+          id: tec.id,
+          nombre: `${tec.nombre} ${tec.apellido || ''}`.trim(),
+          especialidad: especialidadNombre,
+          total: asignados.length,
+          finalizados,
+          exito: ratio
+        };
+      }).sort((a, b) => b.finalizados - a.finalizados || b.total - a.total);
+
+      const mecanicoDestacado = tecnicosRanking.length > 0 && tecnicosRanking[0].finalizados > 0
+        ? tecnicosRanking[0].nombre
+        : 'Sin finalizaciones';
+
+      // 5. Proveedores
+      const provMap = {};
+      let totalGastoProv = 0;
+      ordenes.forEach(o => {
+        const nombre = o.proveedor?.razonSocial || o.proveedor?.nombre || `Proveedor #${o.proveedorId}`;
+        const monto = o.total || 0;
+        totalGastoProv += monto;
+        if (!provMap[nombre]) provMap[nombre] = { ordenes: 0, total: 0 };
+        provMap[nombre].ordenes += 1;
+        provMap[nombre].total += monto;
+      });
+
+      const proveedoresRanking = Object.entries(provMap).map(([nombre, d]) => ({
+        nombre,
+        ordenes: d.ordenes,
+        monto: d.total,
+        participacion: totalGastoProv > 0 ? ((d.total / totalGastoProv) * 100).toFixed(1) : '0.0'
+      })).sort((a, b) => b.monto - a.monto);
+
+      setMetricas({
+        facturacionMes,
+        saldoPorCobrar,
+        totalCompras,
+        ticketsMes,
+        ticketsAbiertos,
+        mecanicoDestacado,
+        ticketsPorEstado,
+        tecnicosRanking,
+        stockCritico,
+        proveedoresRanking
+      });
+
+      if (mostrarToast) {
+        toast.success('Métricas del taller actualizadas');
+      }
     } catch {
-      setError('Error al sincronizar métricas del sistema.');
+      toast.error('Error al actualizar los indicadores del panel');
     } finally {
-      setLoading(false);
+      setCargando(false);
     }
   };
 
   useEffect(() => {
-    if (tieneAccesoGeneral) {
-      cargarMetricas();
-    }
-  }, [tieneAccesoGeneral]);
-
-  // Pantalla de bloqueo si entra un Técnico por URL directa
-  if (!tieneAccesoGeneral) {
-    return (
-      <div style={styles.deniedContainer}>
-        <ShieldAlert size={64} color="#ef4444" />
-        <h2 style={styles.deniedTitle}>Acceso Restringido</h2>
-        <p style={styles.deniedText}>
-          Tu perfil técnico no cuenta con permisos para visualizar métricas, finanzas ni estadísticas generales del taller.
-        </p>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return <div style={styles.centerText}>Cargando panel de control y métricas...</div>;
-  }
-
-  const stats = data?.estadisticas || {};
-  const bajoStock = data?.productosBajoStock || [];
-  const topProveedores = data?.topProveedores || [];
-  const productividad = data?.productividadTecnicos || [];
+    cargarDatos();
+  }, []);
 
   return (
-    <div>
-      <div style={styles.header}>
+    <div className="page-container">
+      <div className="page-header">
         <div>
-          <h1 style={styles.title}>Panel General y Métricas</h1>
-          <p style={styles.subtitle}>Visión consolidada del rendimiento de taller e inventario</p>
+          <h1 className="page-title">Panel General y Métricas</h1>
+          <p className="page-subtitle">Visión consolidada del rendimiento operativo, financiero y de abastecimiento</p>
         </div>
-        <button onClick={cargarMetricas} style={styles.btnRefresh}>
-          <RefreshCw size={15} /> Actualizar
+        <button onClick={() => cargarDatos(true)} disabled={cargando} className="btn-secondary">
+          <RefreshCw size={15} />
+          {cargando ? 'Actualizando...' : 'Actualizar'}
         </button>
       </div>
 
-      {error && <div style={styles.error}>{error}</div>}
-
-      {/* KPI CARDS */}
-      <div style={styles.kpiGrid}>
-        <div style={styles.kpiCard}>
-          <div style={styles.kpiHeader}>
-            <span style={styles.kpiLabel}>Tickets Este Mes</span>
-            <div style={{ ...styles.kpiIcon, backgroundColor: '#eff6ff', color: '#0284c7' }}>
-              <CalendarCheck size={20} />
+      <div className="kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <span className="kpi-label">Facturación del Mes</span>
+            <div className="kpi-icon" style={{ backgroundColor: '#ecfdf5', color: '#059669' }}>
+              <DollarSign size={18} />
             </div>
           </div>
-          <div style={styles.kpiValue}>{stats.TicketsEsteMes || 0}</div>
-          <span style={styles.kpiSub}>Total histórico: {stats.TotalTickets || 0}</span>
+          <strong className="kpi-value" style={{ color: '#059669' }}>
+            ${metricas.facturacionMes.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+          </strong>
+          <span className="kpi-sub">Ingresos registrados en el mes</span>
         </div>
 
-        <div style={styles.kpiCard}>
-          <div style={styles.kpiHeader}>
-            <span style={styles.kpiLabel}>Tickets Ingresados Hoy</span>
-            <div style={{ ...styles.kpiIcon, backgroundColor: '#f0fdf4', color: '#16a34a' }}>
-              <Wrench size={20} />
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <span className="kpi-label">Cuentas por Cobrar</span>
+            <div className="kpi-icon" style={{ backgroundColor: '#fef2f2', color: '#dc2626' }}>
+              <Clock size={18} />
             </div>
           </div>
-          <div style={styles.kpiValue}>{stats.TicketsHoy || 0}</div>
-          <span style={styles.kpiSub}>Órdenes de trabajo abiertas</span>
+          <strong className="kpi-value" style={{ color: '#dc2626' }}>
+            ${metricas.saldoPorCobrar.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+          </strong>
+          <span className="kpi-sub">Saldos pendientes de cobro</span>
         </div>
 
-        <div style={styles.kpiCard}>
-          <div style={styles.kpiHeader}>
-            <span style={styles.kpiLabel}>Mecánico Destacado</span>
-            <div style={{ ...styles.kpiIcon, backgroundColor: '#fefce8', color: '#ca8a04' }}>
-              <Award size={20} />
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <span className="kpi-label">Tickets en Taller</span>
+            <div className="kpi-icon" style={{ backgroundColor: '#eff6ff', color: '#0284c7' }}>
+              <Wrench size={18} />
             </div>
           </div>
-          <div style={{ ...styles.kpiValue, fontSize: '1.25rem' }}>{stats.TecnicoMasProductivo || 'N/A'}</div>
-          <span style={styles.kpiSub}>Mayor volumen de finalizaciones</span>
+          <strong className="kpi-value" style={{ color: '#0284c7' }}>
+            {metricas.ticketsAbiertos}
+          </strong>
+          <span className="kpi-sub">Órdenes de trabajo activas</span>
         </div>
 
-        <div style={styles.kpiCard}>
-          <div style={styles.kpiHeader}>
-            <span style={styles.kpiLabel}>Alertas de Reposición</span>
-            <div style={{ ...styles.kpiIcon, backgroundColor: '#fef2f2', color: '#dc2626' }}>
-              <AlertTriangle size={20} />
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <span className="kpi-label">Mecánico Destacado</span>
+            <div className="kpi-icon" style={{ backgroundColor: '#fef9c3', color: '#ca8a04' }}>
+              <Award size={18} />
             </div>
           </div>
-          <div style={{ ...styles.kpiValue, color: bajoStock.length > 0 ? '#dc2626' : '#0f172a' }}>
-            {bajoStock.length}
+          <strong className="kpi-value" style={{ fontSize: '1.2rem', color: '#0f172a' }}>
+            {metricas.mecanicoDestacado}
+          </strong>
+          <span className="kpi-sub">Mayor volumen de finalizaciones</span>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-header">
+            <span className="kpi-label">Alertas de Reposición</span>
+            <div className="kpi-icon" style={{ backgroundColor: '#fffbeb', color: '#d97706' }}>
+              <AlertTriangle size={18} />
+            </div>
           </div>
-          <span style={styles.kpiSub}>Ítems con stock crítico</span>
+          <strong className="kpi-value" style={{ color: metricas.stockCritico.length > 0 ? '#d97706' : '#059669' }}>
+            {metricas.stockCritico.length}
+          </strong>
+          <span className="kpi-sub">Ítems con stock bajo o nulo</span>
         </div>
       </div>
 
-      {/* SECCIÓN 2 COLUMNAS */}
-      <div style={styles.gridTwoCols}>
-        {/* Productividad Técnicos */}
-        <div style={styles.card}>
-          <div style={styles.cardHeader}>
+      <div className="grid-two-cols">
+        <div className="ui-card">
+          <div className="ui-card-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Users size={18} color="#0284c7" />
-              <h3 style={styles.cardTitle}>Rendimiento de Técnicos</h3>
+              <h3 className="ui-card-title">Rendimiento de Técnicos</h3>
             </div>
           </div>
-          <table style={styles.table}>
-            <thead>
-              <tr style={styles.thRow}>
-                <th style={styles.th}>Técnico</th>
-                <th style={styles.th}>Especialidad</th>
-                <th style={styles.th}>Finalizados</th>
-                <th style={styles.th}>% Éxito</th>
-              </tr>
-            </thead>
-            <tbody>
-              {productividad.length === 0 ? (
-                <tr><td colSpan="4" style={styles.emptyTable}>Sin datos registrados</td></tr>
-              ) : (
-                productividad.map((tec, i) => (
-                  <tr key={i} style={styles.tr}>
-                    <td style={{ ...styles.td, fontWeight: '600', color: '#0f172a' }}>{tec.nombreTecnico}</td>
-                    <td style={styles.td}><span style={styles.badgeMuted}>{tec.especialidad}</span></td>
-                    <td style={styles.td}>{tec.ticketsFinalizados} / {tec.totalTickets}</td>
-                    <td style={styles.td}>
-                      <span style={styles.badgeSuccess}>{tec.porcentajeFinalizados}%</span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <div className="ui-table-container">
+            <table className="ui-table">
+              <thead>
+                <tr>
+                  <th>Técnico</th>
+                  <th>Especialidad</th>
+                  <th style={{ textAlign: 'center' }}>Finalizados</th>
+                  <th style={{ textAlign: 'center' }}>% Éxito</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.tecnicosRanking.length === 0 ? (
+                  <tr><td colSpan="4" className="empty-state">Sin técnicos asignados</td></tr>
+                ) : (
+                  metricas.tecnicosRanking.map(tec => (
+                    <tr key={tec.id}>
+                      <td><strong>{tec.nombre}</strong></td>
+                      <td>
+                        <span style={{ backgroundColor: '#f1f5f9', color: '#475569', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 500 }}>
+                          {tec.especialidad}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        {tec.finalizados} / {tec.total}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span style={{
+                          padding: '0.2rem 0.5rem',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          backgroundColor: tec.exito >= 75 ? '#ecfdf5' : '#f8fafc',
+                          color: tec.exito >= 75 ? '#059669' : '#475569'
+                        }}>
+                          {tec.exito}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        {/* Reposición Stock Crítico */}
-        <div style={styles.card}>
-          <div style={styles.cardHeader}>
+        <div className="ui-card">
+          <div className="ui-card-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <ShoppingCart size={18} color="#dc2626" />
-              <h3 style={styles.cardTitle}>Repuestos con Stock Crítico</h3>
+              <Package size={18} color="#dc2626" />
+              <h3 className="ui-card-title">Repuestos con Stock Crítico</h3>
             </div>
           </div>
-          <table style={styles.table}>
+          <div className="ui-table-container">
+            <table className="ui-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Producto</th>
+                  <th style={{ textAlign: 'center' }}>Actual</th>
+                  <th style={{ textAlign: 'center' }}>Mínimo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.stockCritico.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="empty-state" style={{ color: '#059669' }}>
+                      <CheckCircle2 size={16} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '6px' }} />
+                      Inventario en niveles óptimos
+                    </td>
+                  </tr>
+                ) : (
+                  metricas.stockCritico.map(p => (
+                    <tr key={p.id}>
+                      <td><code>{p.codigo}</code></td>
+                      <td><strong>{p.nombre}</strong></td>
+                      <td style={{ textAlign: 'center', fontWeight: '700', color: '#dc2626' }}>
+                        {p.stockActual}
+                      </td>
+                      <td style={{ textAlign: 'center', color: '#64748b' }}>
+                        {p.stockMinimo || 5}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="ui-card">
+        <div className="ui-card-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <ShoppingCart size={18} color="#0284c7" />
+            <h3 className="ui-card-title">Principales Proveedores (Órdenes de Compra)</h3>
+          </div>
+        </div>
+        <div className="ui-table-container">
+          <table className="ui-table">
             <thead>
-              <tr style={styles.thRow}>
-                <th style={styles.th}>Código</th>
-                <th style={styles.th}>Producto</th>
-                <th style={styles.th}>Stock Actual</th>
-                <th style={styles.th}>Mínimo</th>
+              <tr>
+                <th>Proveedor</th>
+                <th style={{ textAlign: 'center' }}>Órdenes Emitidas</th>
+                <th style={{ textAlign: 'right' }}>Monto Comprado</th>
+                <th style={{ textAlign: 'center' }}>Participación</th>
               </tr>
             </thead>
             <tbody>
-              {bajoStock.length === 0 ? (
-                <tr><td colSpan="4" style={styles.emptyTable}>Inventario en niveles óptimos</td></tr>
+              {metricas.proveedoresRanking.length === 0 ? (
+                <tr><td colSpan="4" className="empty-state">No hay órdenes de compra emitidas</td></tr>
               ) : (
-                bajoStock.map((prod) => (
-                  <tr key={prod.id} style={styles.tr}>
-                    <td style={styles.td}><strong>{prod.codigo}</strong></td>
-                    <td style={{ ...styles.td, color: '#0f172a', fontWeight: '500' }}>{prod.nombre}</td>
-                    <td style={styles.td}>
-                      <span style={styles.badgeDanger}>{prod.stockActual} u.</span>
+                metricas.proveedoresRanking.map((prov, i) => (
+                  <tr key={i}>
+                    <td><strong>{prov.nombre}</strong></td>
+                    <td style={{ textAlign: 'center' }}>{prov.ordenes} {prov.ordenes === 1 ? 'orden' : 'órdenes'}</td>
+                    <td style={{ textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
+                      ${prov.monto.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                     </td>
-                    <td style={{ ...styles.td, color: '#64748b' }}>{prod.stockMinimo} u.</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ backgroundColor: '#f0f9ff', color: '#0284c7', padding: '0.2rem 0.55rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700 }}>
+                        {prov.participacion}%
+                      </span>
+                    </td>
                   </tr>
                 ))
               )}
@@ -205,79 +400,6 @@ export default function Dashboard() {
           </table>
         </div>
       </div>
-
-      {/* TOP PROVEEDORES - RESTRINGIDO A ADMINISTRADORES */}
-      {esAdmin && (
-        <div style={{ ...styles.card, marginTop: '1.5rem' }}>
-          <div style={styles.cardHeader}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <TrendingUp size={18} color="#0284c7" />
-              <h3 style={styles.cardTitle}>Principales Proveedores (Últimos 6 Meses)</h3>
-            </div>
-          </div>
-          <table style={styles.table}>
-            <thead>
-              <tr style={styles.thRow}>
-                <th style={styles.th}>Proveedor</th>
-                <th style={styles.th}>Órdenes Emitidas</th>
-                <th style={styles.th}>Monto Comprado</th>
-                <th style={styles.th}>Participación</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topProveedores.length === 0 ? (
-                <tr><td colSpan="4" style={styles.emptyTable}>No hay historial de compras reciente</td></tr>
-              ) : (
-                topProveedores.map((prov, i) => (
-                  <tr key={i} style={styles.tr}>
-                    <td style={{ ...styles.td, fontWeight: '600', color: '#0f172a' }}>{prov.nombreProveedor}</td>
-                    <td style={styles.td}>{prov.cantidadOrdenes} órdenes</td>
-                    <td style={{ ...styles.td, fontWeight: '600' }}>
-                      ${Number(prov.montoTotal || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={styles.td}>
-                      <span style={styles.badgeInfo}>{Number(prov.porcentajeTotal || 0).toFixed(1)}%</span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }
-
-const styles = {
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.75rem' },
-  title: { margin: 0, fontSize: '1.625rem', fontWeight: '700', color: '#0f172a', letterSpacing: '-0.025em' },
-  subtitle: { margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: '#64748b' },
-  btnRefresh: { display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 0.9rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' },
-  centerText: { textAlign: 'center', padding: '4rem', color: '#64748b', fontSize: '1rem' },
-  error: { padding: '0.75rem 1rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', marginBottom: '1rem' },
-  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginBottom: '1.5rem' },
-  kpiCard: { backgroundColor: '#ffffff', padding: '1.25rem', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.07)' },
-  kpiHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' },
-  kpiLabel: { fontSize: '0.8rem', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
-  kpiIcon: { padding: '0.45rem', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  kpiValue: { fontSize: '1.75rem', fontWeight: '700', color: '#0f172a', marginBottom: '0.25rem' },
-  kpiSub: { fontSize: '0.75rem', color: '#94a3b8' },
-  gridTwoCols: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '1.25rem' },
-  card: { backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.07)', overflow: 'hidden' },
-  cardHeader: { padding: '1rem 1.25rem', borderBottom: '1px solid #f1f5f9' },
-  cardTitle: { margin: 0, fontSize: '1rem', fontWeight: '600', color: '#0f172a' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' },
-  thRow: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
-  th: { padding: '0.75rem 1.25rem', color: '#475569', fontWeight: '600', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  tr: { borderBottom: '1px solid #f8fafc' },
-  td: { padding: '0.8rem 1.25rem', color: '#334155' },
-  emptyTable: { textAlign: 'center', padding: '2rem', color: '#94a3b8' },
-  badgeSuccess: { padding: '0.2rem 0.5rem', backgroundColor: '#ecfdf5', color: '#059669', borderRadius: '6px', fontWeight: '600', fontSize: '0.75rem' },
-  badgeDanger: { padding: '0.2rem 0.5rem', backgroundColor: '#fef2f2', color: '#dc2626', borderRadius: '6px', fontWeight: '600', fontSize: '0.75rem' },
-  badgeInfo: { padding: '0.2rem 0.5rem', backgroundColor: '#eff6ff', color: '#0284c7', borderRadius: '6px', fontWeight: '600', fontSize: '0.75rem' },
-  badgeMuted: { padding: '0.2rem 0.5rem', backgroundColor: '#f1f5f9', color: '#475569', borderRadius: '4px', fontSize: '0.75rem' },
-  deniedContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', textAlign: 'center' },
-  deniedTitle: { marginTop: '1rem', fontSize: '1.5rem', color: '#0f172a' },
-  deniedText: { color: '#64748b', marginTop: '0.5rem', maxWidth: '400px' }
-};

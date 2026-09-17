@@ -34,18 +34,16 @@ namespace Controladora
 
         public ReadOnlyCollection<Factura> RecuperarFacturas()
         {
-            try
+            using (var db = new Context())
             {
-                return context.Facturas
+                return db.Facturas
+                    .AsNoTracking()
+                    .Include(f => f.Cliente)
                     .Include(f => f.Detalles)
                     .Include(f => f.Pagos)
                     .OrderByDescending(f => f.FechaEmision)
                     .ToList()
                     .AsReadOnly();
-            }
-            catch (Exception)
-            {
-                throw;
             }
         }
 

@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Entidades.Facturacion
+﻿namespace Entidades.Facturacion
 {
     public class Factura
     {
@@ -17,8 +11,11 @@ namespace Entidades.Facturacion
         public decimal Descuento { get; set; }
         public decimal Total { get; set; }
         public decimal SaldoPendiente { get; set; }
-        public string Estado { get; set; } = "Pendiente"; // "Pendiente", "PagadaParcial", "Pagada", "Anulada"
+        public string Estado { get; set; } = "Pendiente";
         public string? Observaciones { get; set; }
+
+        // Propiedad de navegación:
+        public virtual Entidades.Tickets.Cliente? Cliente { get; set; }
 
         public List<DetalleFactura> Detalles { get; set; } = new();
         public List<Pago> Pagos { get; set; } = new();

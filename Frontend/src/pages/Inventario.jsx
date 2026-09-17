@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { inventarioService } from '../api/inventarioService';
 import api from '../api/axiosClient';
-import { RefreshCw, Package, ArrowUpRight, ArrowDownLeft, AlertTriangle, SlidersHorizontal, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { RefreshCw, ArrowUpRight, ArrowDownLeft, AlertTriangle, SlidersHorizontal, X, FileSpreadsheet } from 'lucide-react';
+import { toast } from 'sonner';
+import { exportToCsv } from '../utils/exportUtils';
 
 export default function Inventario() {
   const [movimientos, setMovimientos] = useState([]);
@@ -10,9 +12,7 @@ export default function Inventario() {
   const [cargando, setCargando] = useState(true);
   const [filtroProducto, setFiltroProducto] = useState('');
   const [modalAjuste, setModalAjuste] = useState(false);
-  const [mensaje, setMensaje] = useState(null);
 
-  // Formulario de Ajuste Manual
   const [formAjuste, setFormAjuste] = useState({
     productoId: '',
     cantidad: 1,
@@ -20,20 +20,23 @@ export default function Inventario() {
     motivo: ''
   });
 
-  const cargarDatos = async () => {
+  const cargarDatos = async (mostrarToast = false) => {
     try {
       setCargando(true);
-        // Ejecución secuencial segura
-        const resMovs = await inventarioService.obtenerMovimientos(filtroProducto || null);
-        setMovimientos(resMovs.data);
+      const resMovs = await inventarioService.obtenerMovimientos(filtroProducto || null);
+      setMovimientos(resMovs.data || []);
 
-        const resAlertas = await inventarioService.obtenerAlertas();
-        setAlertas(resAlertas.data);
+      const resAlertas = await inventarioService.obtenerAlertas();
+      setAlertas(resAlertas.data || []);
 
-        const resProds = await api.get('/productos').catch(() => ({ data: [] }));
-        setProductos(resProds.data);
+      const resProds = await api.get('/productos').catch(() => ({ data: [] }));
+      setProductos(resProds.data || []);
+
+      if (mostrarToast) {
+        toast.success('Libro de inventario sincronizado');
+      }
     } catch {
-      setMensaje({ tipo: 'error', texto: 'Error al sincronizar el inventario.' });
+      toast.error('Error al sincronizar el inventario');
     } finally {
       setCargando(false);
     }
@@ -54,13 +57,50 @@ export default function Inventario() {
         tipoAjuste: formAjuste.tipoAjuste,
         motivo: formAjuste.motivo || 'Ajuste manual de stock'
       });
-      setMensaje({ tipo: 'exito', texto: 'Movimiento de stock registrado correctamente.' });
+      toast.success('Movimiento de stock registrado correctamente');
       setModalAjuste(false);
       setFormAjuste({ productoId: '', cantidad: 1, tipoAjuste: 'Ingreso', motivo: '' });
       cargarDatos();
     } catch (err) {
-      const msg = err.response?.data?.mensaje || 'Error al asentar el ajuste.';
-      setMensaje({ tipo: 'error', texto: msg });
+      const msg = err.response?.data?.mensaje || err.response?.data || 'Error al asentar el ajuste';
+      toast.error(msg);
+    }
+  };
+
+  const handleExportarKardex = () => {
+    if (!movimientos.length) {
+      toast.warning('No hay movimientos registrados para exportar.');
+      return;
+    }
+
+    try {
+      const columnas = [
+        { key: 'fecha', label: 'Fecha y Hora' },
+        { key: 'nombreProducto', label: 'Repuesto / Producto' },
+        { key: 'tipoMovimiento', label: 'Tipo' },
+        { key: 'cantidad', label: 'Cantidad' },
+        { key: 'stockAnterior', label: 'Stock Anterior' },
+        { key: 'stockNuevo', label: 'Stock Resultante' },
+        { key: 'motivoReferencia', label: 'Motivo / Referencia' },
+        { key: 'usuario', label: 'Operador' }
+      ];
+
+      const datosFormateados = movimientos.map(m => ({
+        fecha: new Date(m.fecha).toLocaleString('es-AR'),
+        nombreProducto: m.nombreProducto,
+        tipoMovimiento: m.tipoMovimiento,
+        cantidad: m.tipoMovimiento.includes('Salida') ? -m.cantidad : m.cantidad,
+        stockAnterior: m.stockAnterior,
+        stockNuevo: m.stockNuevo,
+        motivoReferencia: m.motivoReferencia || '—',
+        usuario: m.usuario || 'Sistema'
+      }));
+
+      const fechaHoy = new Date().toISOString().split('T')[0];
+      exportToCsv(datosFormateados, columnas, `Kardex_Inventario_CarFix_${fechaHoy}`);
+      toast.success('Kardex de Inventario exportado para Excel');
+    } catch {
+      toast.error('Error al generar el archivo');
     }
   };
 
@@ -78,26 +118,27 @@ export default function Inventario() {
   };
 
   return (
-    <div>
-      {/* HEADER */}
-      <div style={styles.header}>
+    <div className="page-container">
+      <div className="page-header">
         <div>
-          <h1 style={styles.title}>Control de Stock e Inventario</h1>
-          <p style={styles.subtitle}>Trazabilidad de movimientos (Kardex), ajustes de depósito y alertas de reposición</p>
+          <h1 className="page-title">Control de Stock e Inventario</h1>
+          <p className="page-subtitle">Trazabilidad de movimientos (Kardex), ajustes de depósito y alertas de reposición</p>
         </div>
-        <div style={styles.headerActions}>
-          <button onClick={cargarDatos} style={styles.btnSecondary}>
+        <div className="header-actions">
+          <button onClick={handleExportarKardex} className="btn-secondary" title="Exportar Kardex a Excel / CSV">
+            <FileSpreadsheet size={15} color="#059669" /> Exportar a Excel
+          </button>
+          <button onClick={() => cargarDatos(true)} className="btn-secondary">
             <RefreshCw size={15} /> Refrescar
           </button>
-          <button onClick={() => setModalAjuste(true)} style={styles.btnPrimary}>
+          <button onClick={() => setModalAjuste(true)} className="btn-primary">
             <SlidersHorizontal size={16} /> Ajustar Stock
           </button>
         </div>
       </div>
 
-      {/* ALERTAS DE STOCK CRÍTICO */}
       {alertas.length > 0 && (
-        <div style={styles.alertCritical}>
+        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '0.85rem 1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
             <AlertTriangle size={18} color="#b45309" />
             <strong style={{ color: '#b45309', fontSize: '0.9rem' }}>
@@ -106,7 +147,7 @@ export default function Inventario() {
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {alertas.map(a => (
-              <span key={a.id} style={styles.criticalChip}>
+              <span key={a.id} style={{ backgroundColor: '#ffffff', border: '1px solid #fcd34d', borderRadius: '6px', padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#92400e' }}>
                 {a.nombre} (Stock: <strong>{a.stockActual}</strong> / Mín: {a.stockMinimo})
               </span>
             ))}
@@ -114,30 +155,14 @@ export default function Inventario() {
         </div>
       )}
 
-      {/* MENSAJES FEEDBACK */}
-      {mensaje && (
-        <div style={{
-          ...styles.alert,
-          backgroundColor: mensaje.tipo === 'error' ? '#fef2f2' : '#ecfdf5',
-          color: mensaje.tipo === 'error' ? '#dc2626' : '#047857',
-          borderColor: mensaje.tipo === 'error' ? '#fecaca' : '#a7f3d0'
-        }}>
-          {mensaje.tipo === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          <span>{mensaje.texto}</span>
-          <button onClick={() => setMensaje(null)} style={{ background: 'none', border: 'none', marginLeft: 'auto', cursor: 'pointer', color: 'inherit' }}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
-      {/* TABLA KARDEX */}
-      <div style={styles.card}>
-        <div style={styles.filterBar}>
-          <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Filtrar por Repuesto:</span>
+      <div className="ui-card">
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '0.75rem', backgroundColor: '#f8fafc' }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#475569' }}>Filtrar por Repuesto:</span>
           <select
             value={filtroProducto}
             onChange={(e) => setFiltroProducto(e.target.value)}
-            style={styles.selectFilter}
+            className="form-select"
+            style={{ width: 'auto', minWidth: '220px' }}
           >
             <option value="">Todos los repuestos</option>
             {productos.map(p => (
@@ -147,76 +172,84 @@ export default function Inventario() {
         </div>
 
         {cargando ? (
-          <div style={styles.emptyState}>Cargando libro de movimientos...</div>
+          <div className="empty-state">Cargando libro de movimientos...</div>
         ) : movimientos.length === 0 ? (
-          <div style={styles.emptyState}>No se han registrado movimientos de inventario todavía.</div>
+          <div className="empty-state">No se han registrado movimientos de inventario todavía.</div>
         ) : (
-          <table style={styles.table}>
-            <thead>
-              <tr style={styles.thRow}>
-                <th style={styles.th}>Fecha</th>
-                <th style={styles.th}>Repuesto / Artículo</th>
-                <th style={styles.th}>Tipo</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Cantidad</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Stock Ant.</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Stock Result.</th>
-                <th style={styles.th}>Motivo / Referencia</th>
-                <th style={styles.th}>Operador</th>
-              </tr>
-            </thead>
-            <tbody>
-              {movimientos.map((m, idx) => {
-                const conf = getTipoBadge(m.tipoMovimiento);
-                const Icon = conf.icon;
-                return (
-                  <tr key={m.id} style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                    <td style={styles.td}>{new Date(m.fecha).toLocaleString('es-AR')}</td>
-                    <td style={styles.td}><strong>{m.nombreProducto}</strong></td>
-                    <td style={styles.td}>
-                      <span style={{
-                        ...styles.badge,
-                        backgroundColor: conf.bg,
-                        color: conf.text,
-                        border: `1px solid ${conf.border}`
-                      }}>
-                        <Icon size={12} style={{ marginRight: '3px' }} />
-                        {conf.label}
-                      </span>
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'center', fontWeight: '700' }}>
-                      {m.tipoMovimiento.includes('Salida') ? `-${m.cantidad}` : `+${m.cantidad}`}
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'center', color: '#64748b' }}>{m.stockAnterior}</td>
-                    <td style={{ ...styles.td, textAlign: 'center', fontWeight: '700', color: '#0f172a' }}>{m.stockNuevo}</td>
-                    <td style={{ ...styles.td, color: '#334155' }}>{m.motivoReferencia || '—'}</td>
-                    <td style={{ ...styles.td, color: '#64748b', fontSize: '0.8rem' }}>{m.usuario || 'Sistema'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="ui-table-container">
+            <table className="ui-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '160px' }}>Fecha</th>
+                  <th>Repuesto / Artículo</th>
+                  <th style={{ width: '120px' }}>Tipo</th>
+                  <th style={{ width: '90px', textAlign: 'center' }}>Cantidad</th>
+                  <th style={{ width: '90px', textAlign: 'center' }}>Stock Ant.</th>
+                  <th style={{ width: '100px', textAlign: 'center' }}>Stock Result.</th>
+                  <th>Motivo / Referencia</th>
+                  <th style={{ width: '120px' }}>Operador</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movimientos.map((m) => {
+                  const conf = getTipoBadge(m.tipoMovimiento);
+                  const Icon = conf.icon;
+                  return (
+                    <tr key={m.id}>
+                      <td style={{ fontSize: '0.8rem', color: '#475569' }}>
+                        {new Date(m.fecha).toLocaleString('es-AR')}
+                      </td>
+                      <td><strong>{m.nombreProducto}</strong></td>
+                      <td>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '0.2rem 0.55rem',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          backgroundColor: conf.bg,
+                          color: conf.text,
+                          border: `1px solid ${conf.border}`
+                        }}>
+                          <Icon size={12} style={{ marginRight: '3px' }} />
+                          {conf.label}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center', fontWeight: 700, color: m.tipoMovimiento.includes('Salida') ? '#dc2626' : '#059669' }}>
+                        {m.tipoMovimiento.includes('Salida') ? `-${m.cantidad}` : `+${m.cantidad}`}
+                      </td>
+                      <td style={{ textAlign: 'center', color: '#64748b' }}>{m.stockAnterior}</td>
+                      <td style={{ textAlign: 'center', fontWeight: 700, color: '#0f172a' }}>{m.stockNuevo}</td>
+                      <td style={{ color: '#334155' }}>{m.motivoReferencia || '—'}</td>
+                      <td style={{ color: '#64748b', fontSize: '0.8rem' }}>{m.usuario || 'Sistema'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {/* MODAL AJUSTE MANUAL */}
       {modalAjuste && (
-        <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalContent, maxWidth: '480px' }}>
-            <div style={styles.modalHeader}>
-              <h3 style={styles.modalTitle}>
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <SlidersHorizontal size={20} color="#0284c7" /> Ajuste de Depósito
               </h3>
-              <button onClick={() => setModalAjuste(false)} style={styles.iconBtn}><X size={20} /></button>
+              <button onClick={() => setModalAjuste(false)} className="btn-ghost-icon"><X size={20} /></button>
             </div>
 
             <form onSubmit={handleAjusteSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Repuesto a Ajustar:</label>
+              <div className="form-group">
+                <label className="form-label">Repuesto a Ajustar:</label>
                 <select
                   required
                   value={formAjuste.productoId}
                   onChange={(e) => setFormAjuste({ ...formAjuste, productoId: e.target.value })}
-                  style={styles.select}
+                  className="form-select"
                 >
                   <option value="">-- Seleccionar Repuesto --</option>
                   {productos.map(p => (
@@ -228,48 +261,48 @@ export default function Inventario() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Tipo de Ajuste:</label>
+                <div className="form-group">
+                  <label className="form-label">Tipo de Ajuste:</label>
                   <select
                     value={formAjuste.tipoAjuste}
                     onChange={(e) => setFormAjuste({ ...formAjuste, tipoAjuste: e.target.value })}
-                    style={styles.select}
+                    className="form-select"
                   >
                     <option value="Ingreso">Ingreso (Suma)</option>
                     <option value="Egreso">Baja / Merma (Resta)</option>
                   </select>
                 </div>
 
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Cantidad:</label>
+                <div className="form-group">
+                  <label className="form-label">Cantidad:</label>
                   <input
                     type="number"
                     min="1"
                     required
                     value={formAjuste.cantidad}
                     onChange={(e) => setFormAjuste({ ...formAjuste, cantidad: e.target.value })}
-                    style={styles.input}
+                    className="form-input"
                   />
                 </div>
               </div>
 
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Motivo / Justificación:</label>
+              <div className="form-group">
+                <label className="form-label">Motivo / Justificación:</label>
                 <input
                   type="text"
                   required
                   placeholder="Ej: Conteo físico semestral, pieza rota, etc."
                   value={formAjuste.motivo}
                   onChange={(e) => setFormAjuste({ ...formAjuste, motivo: e.target.value })}
-                  style={styles.input}
+                  className="form-input"
                 />
               </div>
 
-              <div style={styles.modalActions}>
-                <button type="button" onClick={() => setModalAjuste(false)} style={styles.btnSecondary}>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setModalAjuste(false)} className="btn-secondary">
                   Cancelar
                 </button>
-                <button type="submit" style={styles.btnPrimary}>
+                <button type="submit" className="btn-primary">
                   Registrar Movimiento
                 </button>
               </div>
@@ -280,35 +313,3 @@ export default function Inventario() {
     </div>
   );
 }
-
-const styles = {
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' },
-  title: { margin: 0, fontSize: '1.625rem', fontWeight: '700', color: '#0f172a', letterSpacing: '-0.025em' },
-  subtitle: { margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: '#64748b' },
-  headerActions: { display: 'flex', gap: '0.65rem' },
-  btnPrimary: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#0284c7', color: '#ffffff', border: 'none', padding: '0.5rem 1.1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  btnSecondary: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 0.9rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  alertCritical: { backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '0.85rem 1rem', marginBottom: '1.5rem' },
-  criticalChip: { backgroundColor: '#ffffff', border: '1px solid #fcd34d', borderRadius: '6px', padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#92400e' },
-  alert: { padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid', marginBottom: '1rem', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' },
-  card: { backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.07)', overflow: 'hidden' },
-  filterBar: { padding: '0.85rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '0.75rem', backgroundColor: '#f8fafc' },
-  selectFilter: { padding: '0.4rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', backgroundColor: '#ffffff', color: '#0f172a', outline: 'none' },
-  emptyState: { padding: '3rem', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.875rem' },
-  thRow: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
-  th: { padding: '0.85rem 1rem', color: '#475569', fontWeight: '600', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  tr: { borderBottom: '1px solid #f1f5f9' },
-  td: { padding: '0.85rem 1rem', verticalAlign: 'middle' },
-  badge: { display: 'inline-flex', alignItems: 'center', padding: '0.2rem 0.55rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600' },
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modalContent: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '1.5rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15)' },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' },
-  modalTitle: { display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: '#0f172a', fontSize: '1.15rem', fontWeight: '700' },
-  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: '#64748b' },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '0.25rem' },
-  label: { fontSize: '0.8rem', fontWeight: '600', color: '#334155' },
-  input: { padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', color: '#0f172a', outline: 'none' },
-  select: { padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', color: '#0f172a', outline: 'none', backgroundColor: '#ffffff' },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '0.65rem', marginTop: '1rem' }
-};

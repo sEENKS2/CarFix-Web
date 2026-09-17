@@ -3,6 +3,7 @@ using Entidades.Core;
 using Entidades.Tickets;
 using Entidades.Validaciones;
 using Entidades.Facturacion;
+using Entidades.Turnos;
 using Microsoft.EntityFrameworkCore;
 
 namespace Modelo
@@ -27,8 +28,8 @@ namespace Modelo
         public DbSet<DetalleFactura> DetallesFactura { get; set; }
         public DbSet<Pago> Pagos { get; set; }
         public DbSet<MovimientoStock> MovimientosStock { get; set; }
-
         public DbSet<HistorialDescripcion> HistorialesDescripciones { get; set; }
+        public DbSet<Turno> Turnos { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {

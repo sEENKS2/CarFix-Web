@@ -1,17 +1,29 @@
 import { useState, useEffect } from 'react';
 import { facturasService } from '../api/facturasService';
-import { RefreshCw, Receipt, DollarSign, Ban, Eye, CheckCircle2, AlertCircle, Clock, X, CreditCard, Banknote, Building2 } from 'lucide-react';
+import ComprobanteFacturaModal from '../components/ComprobanteFacturaModal';
+import { 
+  RefreshCw, 
+  Receipt, 
+  DollarSign, 
+  Ban, 
+  Eye, 
+  X, 
+  Printer,
+  FileSpreadsheet
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { exportToCsv } from '../utils/exportUtils';
 
 export default function Facturacion() {
   const [facturas, setFacturas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState('Todos');
   const [facturaSeleccionada, setFacturaSeleccionada] = useState(null);
+  const [facturaImprimir, setFacturaImprimir] = useState(null);
   const [modalCobro, setModalCobro] = useState(null);
   const [montoPago, setMontoPago] = useState('');
   const [metodoPago, setMetodoPago] = useState('Efectivo');
   const [referenciaPago, setReferenciaPago] = useState('');
-  const [mensaje, setMensaje] = useState(null);
 
   const ESTADOS_FACTURA = {
     Pendiente: { label: 'Pendiente', bg: '#fef2f2', text: '#dc2626', border: '#fecaca' },
@@ -20,13 +32,16 @@ export default function Facturacion() {
     Anulada: { label: 'Anulada', bg: '#f1f5f9', text: '#64748b', border: '#cbd5e1' }
   };
 
-  const cargarFacturas = async () => {
+  const cargarFacturas = async (mostrarToast = false) => {
     try {
       setCargando(true);
       const res = await facturasService.obtenerTodas();
-      setFacturas(res.data);
+      setFacturas(res.data || []);
+      if (mostrarToast) {
+        toast.success('Facturación y cobranzas actualizadas');
+      }
     } catch {
-      setMensaje({ tipo: 'error', texto: 'No se pudieron recuperar las facturas de la base de datos.' });
+      toast.error('No se pudieron recuperar las facturas');
     } finally {
       setCargando(false);
     }
@@ -53,12 +68,12 @@ export default function Facturacion() {
         metodoPago,
         referenciaComprobante: referenciaPago
       });
-      setMensaje({ tipo: 'exito', texto: `Cobro de $${parseFloat(montoPago).toLocaleString('es-AR')} asentado con éxito.` });
+      toast.success(`Cobro de $${parseFloat(montoPago).toLocaleString('es-AR')} asentado con éxito`);
       setModalCobro(null);
       cargarFacturas();
     } catch (err) {
-      const msg = err.response?.data?.mensaje || 'Error al procesar el cobro.';
-      setMensaje({ tipo: 'error', texto: msg });
+      const msg = err.response?.data?.mensaje || err.response?.data || 'Error al procesar el cobro';
+      toast.error(msg);
     }
   };
 
@@ -68,11 +83,11 @@ export default function Facturacion() {
 
     try {
       await facturasService.anularFactura(id, motivo);
-      setMensaje({ tipo: 'exito', texto: 'Comprobante anulado exitosamente.' });
+      toast.success('Comprobante anulado exitosamente');
       cargarFacturas();
     } catch (err) {
-      const msg = err.response?.data?.mensaje || 'No se pudo anular la factura.';
-      setMensaje({ tipo: 'error', texto: msg });
+      const msg = err.response?.data?.mensaje || err.response?.data || 'No se pudo anular la factura';
+      toast.error(msg);
     }
   };
 
@@ -80,6 +95,39 @@ export default function Facturacion() {
     if (filtroEstado === 'Todos') return true;
     return f.estado.toLowerCase() === filtroEstado.toLowerCase();
   });
+
+  const handleExportarExcel = () => {
+    if (!facturasFiltradas.length) {
+      toast.warning('No hay comprobantes para exportar con el filtro actual.');
+      return;
+    }
+
+    try {
+      const columnas = [
+        { key: 'numeroFactura', label: 'N° Factura' },
+        { key: 'fecha', label: 'Fecha de Emisión' },
+        { key: 'ticketId', label: 'N° Ticket' },
+        { key: 'total', label: 'Total ($)' },
+        { key: 'saldoPendiente', label: 'Saldo Pendiente ($)' },
+        { key: 'estado', label: 'Estado' }
+      ];
+
+      const datosFormateados = facturasFiltradas.map(f => ({
+        numeroFactura: f.numeroFactura,
+        fecha: f.fechaEmision ? new Date(f.fechaEmision).toLocaleDateString('es-AR') : '—',
+        ticketId: `#${f.ticketId}`,
+        total: f.total,
+        saldoPendiente: f.saldoPendiente,
+        estado: ESTADOS_FACTURA[f.estado]?.label || f.estado
+      }));
+
+      const fechaHoy = new Date().toISOString().split('T')[0];
+      exportToCsv(datosFormateados, columnas, `Facturacion_CarFix_${fechaHoy}`);
+      toast.success('Reporte de Facturación exportado para Excel');
+    } catch {
+      toast.error('Error al generar el archivo');
+    }
+  };
 
   const totalPorCobrar = facturas
     .filter(f => f.estado !== 'Anulada')
@@ -90,61 +138,50 @@ export default function Facturacion() {
     .reduce((acc, f) => acc + ((f.total || 0) - (f.saldoPendiente || 0)), 0);
 
   return (
-    <div>
-      {/* HEADER */}
-      <div style={styles.header}>
+    <div className="page-container">
+      <div className="page-header">
         <div>
-          <h1 style={styles.title}>Gestión de Facturación y Cobranzas</h1>
-          <p style={styles.subtitle}>Emisión de comprobantes, control de cuenta corriente y registro de pagos</p>
+          <h1 className="page-title">Gestión de Facturación y Cobranzas</h1>
+          <p className="page-subtitle">Emisión de comprobantes, control de cuenta corriente y registro de pagos</p>
         </div>
-        <div style={styles.headerActions}>
-          <button onClick={cargarFacturas} style={styles.btnSecondary}>
+        <div className="header-actions">
+          <button onClick={handleExportarExcel} className="btn-secondary" title="Descargar reporte en formato Excel / CSV">
+            <FileSpreadsheet size={15} color="#059669" /> Exportar a Excel
+          </button>
+          <button onClick={() => cargarFacturas(true)} className="btn-secondary">
             <RefreshCw size={15} /> Refrescar
           </button>
         </div>
       </div>
 
-      {/* METRICAS RAPIDAS */}
-      <div style={styles.kpiGrid}>
-        <div style={styles.kpiCard}>
-          <span style={styles.kpiLabel}>Total Cobrado</span>
-          <strong style={{ ...styles.kpiValue, color: '#059669' }}>
+      <div className="kpi-grid">
+        <div className="kpi-card">
+          <span className="kpi-label">Total Cobrado</span>
+          <strong className="kpi-value" style={{ color: '#059669' }}>
             ${totalCobrado.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
           </strong>
         </div>
-        <div style={styles.kpiCard}>
-          <span style={styles.kpiLabel}>Saldos Pendientes de Cobro</span>
-          <strong style={{ ...styles.kpiValue, color: '#dc2626' }}>
+        <div className="kpi-card">
+          <span className="kpi-label">Saldos Pendientes de Cobro</span>
+          <strong className="kpi-value" style={{ color: '#dc2626' }}>
             ${totalPorCobrar.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
           </strong>
         </div>
-        <div style={styles.kpiCard}>
-          <span style={styles.kpiLabel}>Comprobantes Emitidos</span>
-          <strong style={{ ...styles.kpiValue, color: '#0f172a' }}>{facturas.length}</strong>
+        <div className="kpi-card">
+          <span className="kpi-label">Comprobantes Emitidos</span>
+          <strong className="kpi-value" style={{ color: '#0f172a' }}>{facturas.length}</strong>
         </div>
       </div>
 
-      {/* MENSAJES DE ALERTA */}
-      {mensaje && (
-        <div style={{
-          ...styles.alert,
-          backgroundColor: mensaje.tipo === 'error' ? '#fef2f2' : '#ecfdf5',
-          color: mensaje.tipo === 'error' ? '#dc2626' : '#047857',
-          borderColor: mensaje.tipo === 'error' ? '#fecaca' : '#a7f3d0'
-        }}>
-          {mensaje.tipo === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          <span>{mensaje.texto}</span>
-          <button onClick={() => setMensaje(null)} style={{ background: 'none', border: 'none', marginLeft: 'auto', cursor: 'pointer', color: 'inherit' }}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
-      {/* FILTROS Y TABLA */}
-      <div style={styles.card}>
-        <div style={styles.filterBar}>
-          <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Filtrar por estado:</span>
-          <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)} style={styles.selectFilter}>
+      <div className="ui-card">
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '0.75rem', backgroundColor: '#f8fafc' }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#475569' }}>Filtrar por estado:</span>
+          <select 
+            value={filtroEstado} 
+            onChange={(e) => setFiltroEstado(e.target.value)} 
+            className="form-select"
+            style={{ width: 'auto', minWidth: '190px' }}
+          >
             <option value="Todos">Todos los comprobantes</option>
             <option value="Pendiente">Solo Pendientes</option>
             <option value="PagadaParcial">Cobro Parcial</option>
@@ -154,145 +191,162 @@ export default function Facturacion() {
         </div>
 
         {cargando ? (
-          <div style={styles.emptyState}>Cargando comprobantes...</div>
+          <div className="empty-state">Cargando comprobantes...</div>
         ) : facturasFiltradas.length === 0 ? (
-          <div style={styles.emptyState}>No se registraron comprobantes con el filtro seleccionado.</div>
+          <div className="empty-state">No se registraron comprobantes con el filtro seleccionado.</div>
         ) : (
-          <table style={styles.table}>
-            <thead>
-              <tr style={styles.thRow}>
-                <th style={styles.th}>N° Comprobante</th>
-                <th style={styles.th}>Fecha</th>
-                <th style={styles.th}>Ticket Ref.</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Total</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Saldo Pendiente</th>
-                <th style={styles.th}>Estado</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {facturasFiltradas.map((fac, idx) => {
-                const confEstado = ESTADOS_FACTURA[fac.estado] || ESTADOS_FACTURA.Pendiente;
-                return (
-                  <tr key={fac.id} style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                    <td style={styles.td}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                        <Receipt size={15} color="#0284c7" />
-                        <strong>{fac.numeroFactura}</strong>
-                      </div>
-                    </td>
-                    <td style={styles.td}>{new Date(fac.fechaEmision).toLocaleDateString('es-AR')}</td>
-                    <td style={styles.td}>
-                      <span style={{ fontWeight: '600', color: '#0284c7' }}>#{fac.ticketId}</span>
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
-                      ${fac.total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: '700', color: fac.saldoPendiente > 0 ? '#dc2626' : '#059669' }}>
-                      ${fac.saldoPendiente.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={styles.td}>
-                      <span style={{
-                        ...styles.badge,
-                        backgroundColor: confEstado.bg,
-                        color: confEstado.text,
-                        border: `1px solid ${confEstado.border}`
-                      }}>
-                        {confEstado.label}
-                      </span>
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '0.4rem' }}>
-                      <button
-                        onClick={() => setFacturaSeleccionada(fac)}
-                        style={styles.btnDetail}
-                        title="Ver detalle del comprobante"
-                      >
-                        <Eye size={14} /> Detalle
-                      </button>
+          <div className="ui-table-container">
+            <table className="ui-table">
+              <thead>
+                <tr>
+                  <th>N° Comprobante</th>
+                  <th>Fecha</th>
+                  <th>Ticket Ref.</th>
+                  <th style={{ textAlign: 'right' }}>Total</th>
+                  <th style={{ textAlign: 'right' }}>Saldo Pendiente</th>
+                  <th>Estado</th>
+                  <th style={{ textAlign: 'center' }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {facturasFiltradas.map((fac) => {
+                  const confEstado = ESTADOS_FACTURA[fac.estado] || ESTADOS_FACTURA.Pendiente;
+                  return (
+                    <tr key={fac.id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                          <Receipt size={15} color="#0284c7" />
+                          <strong>{fac.numeroFactura}</strong>
+                        </div>
+                      </td>
+                      <td>{new Date(fac.fechaEmision).toLocaleDateString('es-AR')}</td>
+                      <td>
+                        <span style={{ fontWeight: 600, color: '#0284c7' }}>#{fac.ticketId}</span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>
+                        ${fac.total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: fac.saldoPendiente > 0 ? '#dc2626' : '#059669' }}>
+                        ${fac.saldoPendiente.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '0.2rem 0.55rem',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          backgroundColor: confEstado.bg,
+                          color: confEstado.text,
+                          border: `1px solid ${confEstado.border}`
+                        }}>
+                          {confEstado.label}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+                          <button
+                            onClick={() => setFacturaSeleccionada(fac)}
+                            className="btn-icon-action"
+                            title="Ver detalle del comprobante"
+                          >
+                            <Eye size={14} /> Detalle
+                          </button>
 
-                      {fac.estado !== 'Pagada' && fac.estado !== 'Anulada' && (
-                        <button
-                          onClick={() => abrirModalCobro(fac)}
-                          style={styles.btnPay}
-                          title="Asentar cobro / entrega"
-                        >
-                          <DollarSign size={14} /> Cobrar
-                        </button>
-                      )}
+                          {fac.estado !== 'Pagada' && fac.estado !== 'Anulada' && (
+                            <button
+                              onClick={() => abrirModalCobro(fac)}
+                              className="btn-success-action"
+                              title="Asentar cobro / entrega"
+                            >
+                              <DollarSign size={14} /> Cobrar
+                            </button>
+                          )}
 
-                      {fac.pagos?.length === 0 && fac.estado !== 'Anulada' && (
-                        <button
-                          onClick={() => handleAnular(fac.id)}
-                          style={styles.btnCancel}
-                          title="Anular comprobante"
-                        >
-                          <Ban size={14} /> Anular
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          {fac.pagos?.length === 0 && fac.estado !== 'Anulada' && (
+                            <button
+                              onClick={() => handleAnular(fac.id)}
+                              className="btn-icon-action"
+                              style={{ color: '#dc2626', borderColor: '#fecaca', backgroundColor: '#fef2f2' }}
+                              title="Anular comprobante"
+                            >
+                              <Ban size={14} /> Anular
+                            </button>
+                          )}
+
+                          <button 
+                            onClick={() => setFacturaImprimir(fac)}
+                            className="btn-icon-action"
+                            title="Generar e imprimir comprobante / PDF"
+                          >
+                            <Printer size={14} /> Comprobante
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {/* MODAL ASENTAR COBRO */}
       {modalCobro && (
-        <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalContent, maxWidth: '480px' }}>
-            <div style={styles.modalHeader}>
-              <h3 style={styles.modalTitle}>
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <DollarSign size={20} color="#059669" /> Asentar Cobro
               </h3>
-              <button onClick={() => setModalCobro(null)} style={styles.iconBtn}><X size={20} /></button>
+              <button onClick={() => setModalCobro(null)} className="btn-ghost-icon"><X size={20} /></button>
             </div>
 
-            <div style={styles.infoBanner}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
               <div>Factura: <strong>{modalCobro.numeroFactura}</strong></div>
               <div>Saldo adeudado: <strong style={{ color: '#dc2626' }}>${modalCobro.saldoPendiente.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong></div>
             </div>
 
             <form onSubmit={handlePagoSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Monto recibido ($):</label>
+              <div className="form-group">
+                <label className="form-label">Monto recibido ($):</label>
                 <input
                   type="number"
                   step="0.01"
                   max={modalCobro.saldoPendiente}
                   value={montoPago}
                   onChange={(e) => setMontoPago(e.target.value)}
-                  style={styles.input}
+                  className="form-input"
                   required
                 />
               </div>
 
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Forma de pago:</label>
-                <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} style={styles.select}>
+              <div className="form-group">
+                <label className="form-label">Forma de pago:</label>
+                <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} className="form-select">
                   <option value="Efectivo">Efectivo</option>
                   <option value="Transferencia">Transferencia Bancaria</option>
                   <option value="Tarjeta">Tarjeta de Débito / Crédito</option>
                 </select>
               </div>
 
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Referencia de operación / POS (opcional):</label>
+              <div className="form-group">
+                <label className="form-label">Referencia de operación / POS (opcional):</label>
                 <input
                   type="text"
                   placeholder="Ej: Trf #94827 o Cupón 1102"
                   value={referenciaPago}
                   onChange={(e) => setReferenciaPago(e.target.value)}
-                  style={styles.input}
+                  className="form-input"
                 />
               </div>
 
-              <div style={styles.modalActions}>
-                <button type="button" onClick={() => setModalCobro(null)} style={styles.btnSecondary}>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setModalCobro(null)} className="btn-secondary">
                   Cancelar
                 </button>
-                <button type="submit" style={styles.btnPrimaryGreen}>
+                <button type="submit" className="btn-primary" style={{ backgroundColor: '#059669' }}>
                   Confirmar Cobro
                 </button>
               </div>
@@ -301,45 +355,50 @@ export default function Facturacion() {
         </div>
       )}
 
-      {/* MODAL VER DETALLE COMPLETO DE FACTURA */}
       {facturaSeleccionada && (
-        <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalContent, maxWidth: '620px' }}>
-            <div style={styles.modalHeader}>
-              <h3 style={styles.modalTitle}>
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '620px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Receipt size={20} color="#0284c7" /> Comprobante {facturaSeleccionada.numeroFactura}
               </h3>
-              <button onClick={() => setFacturaSeleccionada(null)} style={styles.iconBtn}><X size={20} /></button>
+              <button onClick={() => setFacturaSeleccionada(null)} className="btn-ghost-icon"><X size={20} /></button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={styles.detailCard}>
+              <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
                   <span>Fecha de Emisión: <strong>{new Date(facturaSeleccionada.fechaEmision).toLocaleDateString('es-AR')}</strong></span>
                   <span>Ticket Vinculado: <strong>#{facturaSeleccionada.ticketId}</strong></span>
                 </div>
               </div>
 
-              <span style={styles.sectionTitle}>Ítems de Factura</span>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '0.5rem' }}>
+                Ítems de Factura
+              </span>
               <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                <table style={styles.table}>
+                <table className="ui-table">
                   <thead>
-                    <tr style={styles.thRow}>
-                      <th style={styles.th}>Tipo</th>
-                      <th style={styles.th}>Descripción</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Cant.</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>P. Unit</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Subtotal</th>
+                    <tr>
+                      <th>Tipo</th>
+                      <th>Descripción</th>
+                      <th style={{ textAlign: 'center' }}>Cant.</th>
+                      <th style={{ textAlign: 'right' }}>P. Unit</th>
+                      <th style={{ textAlign: 'right' }}>Subtotal</th>
                     </tr>
                   </thead>
                   <tbody>
                     {facturaSeleccionada.detalles?.map((d, i) => (
-                      <tr key={i} style={styles.tr}>
-                        <td style={styles.td}><span style={styles.badgeTipo}>{d.tipo}</span></td>
-                        <td style={styles.td}>{d.descripcion}</td>
-                        <td style={{ ...styles.td, textAlign: 'center' }}>{d.cantidad}</td>
-                        <td style={{ ...styles.td, textAlign: 'right' }}>${d.precioUnitario.toFixed(2)}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600' }}>
+                      <tr key={i}>
+                        <td>
+                          <span style={{ display: 'inline-flex', padding: '0.15rem 0.45rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+                            {d.tipo}
+                          </span>
+                        </td>
+                        <td>{d.descripcion}</td>
+                        <td style={{ textAlign: 'center' }}>{d.cantidad}</td>
+                        <td style={{ textAlign: 'right' }}>${d.precioUnitario.toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>
                           ${(d.cantidad * d.precioUnitario).toFixed(2)}
                         </td>
                       </tr>
@@ -348,14 +407,15 @@ export default function Facturacion() {
                 </table>
               </div>
 
-              {/* HISTORIAL DE COBROS DE ESTA FACTURA */}
-              <span style={styles.sectionTitle}>Historial de Cobros Recibidos</span>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '0.5rem' }}>
+                Historial de Cobros Recibidos
+              </span>
               {facturaSeleccionada.pagos?.length === 0 ? (
                 <div style={{ fontSize: '0.85rem', color: '#64748b' }}>No registra pagos recibidos aún.</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                   {facturaSeleccionada.pagos.map((p, idx) => (
-                    <div key={idx} style={styles.paymentCard}>
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
                       <div>
                         <strong>${p.monto.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong> - {p.metodoPago}
                         {p.referenciaComprobante && <span style={{ color: '#64748b', marginLeft: '6px' }}>({p.referenciaComprobante})</span>}
@@ -368,8 +428,8 @@ export default function Facturacion() {
                 </div>
               )}
 
-              <div style={styles.modalActions}>
-                <button onClick={() => setFacturaSeleccionada(null)} style={styles.btnSecondary}>
+              <div className="modal-actions">
+                <button onClick={() => setFacturaSeleccionada(null)} className="btn-secondary">
                   Cerrar
                 </button>
               </div>
@@ -377,48 +437,13 @@ export default function Facturacion() {
           </div>
         </div>
       )}
+
+      {facturaImprimir && (
+        <ComprobanteFacturaModal 
+          factura={facturaImprimir} 
+          alCerrar={() => setFacturaImprimir(null)} 
+        />
+      )}
     </div>
   );
 }
-
-const styles = {
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' },
-  title: { margin: 0, fontSize: '1.625rem', fontWeight: '700', color: '#0f172a', letterSpacing: '-0.025em' },
-  subtitle: { margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: '#64748b' },
-  headerActions: { display: 'flex', gap: '0.65rem' },
-  btnSecondary: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 0.9rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' },
-  kpiCard: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.25rem', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' },
-  kpiLabel: { fontSize: '0.75rem', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  kpiValue: { fontSize: '1.35rem', fontWeight: '800' },
-  card: { backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.07)', overflow: 'hidden' },
-  filterBar: { padding: '0.85rem 1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '0.75rem', backgroundColor: '#f8fafc' },
-  selectFilter: { padding: '0.4rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', backgroundColor: '#ffffff', color: '#0f172a', outline: 'none' },
-  alert: { padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid', marginBottom: '1rem', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' },
-  emptyState: { padding: '3rem', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.875rem' },
-  thRow: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
-  th: { padding: '0.85rem 1rem', color: '#475569', fontWeight: '600', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  tr: { borderBottom: '1px solid #f1f5f9' },
-  td: { padding: '0.85rem 1rem', verticalAlign: 'middle' },
-  badge: { display: 'inline-flex', alignItems: 'center', padding: '0.2rem 0.55rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600' },
-  badgeTipo: { display: 'inline-flex', padding: '0.15rem 0.45rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: '600', backgroundColor: '#eff6ff', color: '#1d4ed8' },
-  btnDetail: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#ffffff', color: '#0284c7', border: '1px solid #bae6fd', padding: '0.35rem 0.65rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' },
-  btnPay: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '0.35rem 0.65rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' },
-  btnCancel: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', padding: '0.35rem 0.65rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' },
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modalContent: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '1.5rem', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15)' },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' },
-  modalTitle: { display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: '#0f172a', fontSize: '1.15rem', fontWeight: '700' },
-  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: '#64748b' },
-  infoBanner: { display: 'flex', justifyContent: 'space-between', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.875rem' },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '0.25rem' },
-  label: { fontSize: '0.8rem', fontWeight: '600', color: '#334155' },
-  input: { padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', color: '#0f172a', outline: 'none' },
-  select: { padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', color: '#0f172a', outline: 'none', backgroundColor: '#ffffff' },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '0.65rem', marginTop: '1rem' },
-  btnPrimaryGreen: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#059669', color: '#ffffff', border: 'none', padding: '0.5rem 1.1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  sectionTitle: { fontSize: '0.75rem', fontWeight: '700', color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '0.5rem' },
-  detailCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem' },
-  paymentCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }
-};

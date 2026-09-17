@@ -13,7 +13,9 @@ import {
   Lock,
   Users,
   Receipt,
-  ArrowLeftRight
+  ArrowLeftRight,
+  CalendarDays,
+  DollarSign
 } from 'lucide-react';
 
 export default function MainLayout() {
@@ -37,6 +39,7 @@ export default function MainLayout() {
     {
       titulo: 'TALLER',
       items: [
+        { to: '/turnos', label: 'Agenda de Turnos', icon: <CalendarDays size={18} />, roles: ['Operadores'] },
         { to: '/tickets', label: 'Tickets de Taller', icon: <Wrench size={18} />, roles: ['Operadores', 'Tecnicos'] },
         { to: '/clientes-vehiculos', label: 'Clientes y Vehículos', icon: <Car size={18} />, roles: ['Operadores'] },
         { to: '/tecnicos', label: 'Equipo Técnico', icon: <Users size={18} />, roles: ['Operadores'] },
@@ -55,6 +58,7 @@ export default function MainLayout() {
       titulo: 'ADMINISTRACIÓN',
       items: [
         { to: '/facturacion', label: 'Facturación y Cobranzas', icon: <Receipt size={18} />, roles: ['Operadores'] },
+        { to: '/caja', label: 'Caja Diaria', icon: <DollarSign size={18} />, roles: ['Operadores'] },
         { to: '/usuarios', label: 'Usuarios / Seguridad', icon: <Lock size={18} />, roles: [] },
         { to: '/auditoria', label: 'Auditoría', icon: <ShieldCheck size={18} />, roles: [] },
       ]

@@ -16,7 +16,6 @@ namespace CarFix.API.Controllers
             {
                 using (var context = new Modelo.Context())
                 {
-                    // AsNoTracking() evita la caché de primer nivel de Entity Framework
                     var lista = context.Tickets
                         .AsNoTracking()
                         .Include(t => t.Cliente)

@@ -1,289 +1,237 @@
-import { useState, useEffect } from 'react';
-import { facturasService } from '../api/facturasService';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../api/axiosClient';
-import { X, Receipt, Plus, Trash2 } from 'lucide-react';
+import { facturasService } from '../api/facturasService';
+import { X, Receipt, Plus, Trash2, Package } from 'lucide-react';
+import { toast } from 'sonner';
+import SearchableSelect from './SearchableSelect';
 
 export default function ModalFacturarTicket({ ticket, alCerrar, alFacturarExitoso }) {
   const [productos, setProductos] = useState([]);
-  const [detalles, setDetalles] = useState([
-    { tipo: 'ManoDeObra', productoId: null, descripcion: 'Mano de obra y diagnóstico', cantidad: 1, precioUnitario: 0 }
-  ]);
-  const [descuento, setDescuento] = useState(0);
-  const [observaciones, setObservaciones] = useState('');
-  const [error, setError] = useState(null);
-  const [guardando, setGuardando] = useState(false);
+  const [cargando, setCargando] = useState(false);
 
-  // Cargar catálogo de productos al abrir el modal
+  // Ítems de la factura
+  const [manoDeObra, setManoDeObra] = useState({
+    descripcion: 'Mano de obra y servicio técnico mecánico',
+    precioUnitario: 0
+  });
+
+  const [repuestosSeleccionados, setRepuestosSeleccionados] = useState([]);
+
+  // Cargar catálogo de repuestos
   useEffect(() => {
     api.get('/productos')
-      .then(res => setProductos(res.data))
-      .catch(() => setProductos([]));
+      .then(res => setProductos(res.data || []))
+      .catch(() => toast.error('Error al cargar catálogo de productos para facturar'));
   }, []);
 
-  const agregarItem = () => {
-    setDetalles([
-      ...detalles,
-      { tipo: 'Repuesto', productoId: null, descripcion: '', cantidad: 1, precioUnitario: 0 }
+  const opcionesProductos = useMemo(() => {
+    return productos.map(p => ({
+      value: p.id,
+      label: `${p.codigo} - ${p.nombre}`,
+      sublabel: `Stock: ${p.stockActual} | $${p.precioUnitario}`
+    }));
+  }, [productos]);
+
+  const agregarFilaRepuesto = () => {
+    setRepuestosSeleccionados([
+      ...repuestosSeleccionados,
+      { productoId: '', cantidad: 1, precioUnitario: 0, descripcion: '' }
     ]);
   };
 
-  const eliminarItem = (index) => {
-    if (detalles.length === 1) return;
-    setDetalles(detalles.filter((_, i) => i !== index));
-  };
-
-  const handleTipoChange = (index, nuevoTipo) => {
-    const nuevosDetalles = [...detalles];
-    nuevosDetalles[index] = {
-      ...nuevosDetalles[index],
-      tipo: nuevoTipo,
-      productoId: null,
-      descripcion: nuevoTipo === 'ManoDeObra' ? 'Servicio / Mano de obra' : '',
-      precioUnitario: 0
-    };
-    setDetalles(nuevosDetalles);
-  };
-
-  const handleProductoSelect = (index, prodId) => {
+  const handleProductoChange = (index, prodId) => {
     const prod = productos.find(p => p.id === parseInt(prodId, 10));
-    const nuevosDetalles = [...detalles];
-    if (prod) {
-      nuevosDetalles[index] = {
-        ...nuevosDetalles[index],
-        productoId: prod.id,
-        descripcion: `${prod.codigo} - ${prod.nombre}`,
-        precioUnitario: prod.precioUnitario || 0
-      };
-    } else {
-      nuevosDetalles[index] = {
-        ...nuevosDetalles[index],
-        productoId: null,
-        descripcion: '',
-        precioUnitario: 0
-      };
-    }
-    setDetalles(nuevosDetalles);
+    const nuevos = [...repuestosSeleccionados];
+    nuevos[index] = {
+      ...nuevos[index],
+      productoId: prodId,
+      descripcion: prod ? prod.nombre : '',
+      precioUnitario: prod ? prod.precioUnitario : 0
+    };
+    setRepuestosSeleccionados(nuevos);
   };
 
-  const actualizarItem = (index, campo, valor) => {
-    const nuevosDetalles = [...detalles];
-    nuevosDetalles[index][campo] = valor;
-    setDetalles(nuevosDetalles);
+  const handleRepuestoFieldChange = (index, campo, valor) => {
+    const nuevos = [...repuestosSeleccionados];
+    nuevos[index][campo] = valor;
+    setRepuestosSeleccionados(nuevos);
   };
 
-  const subtotal = detalles.reduce((acc, item) => acc + (item.cantidad * item.precioUnitario), 0);
-  const total = Math.max(0, subtotal - Number(descuento));
+  const eliminarFilaRepuesto = (index) => {
+    setRepuestosSeleccionados(repuestosSeleccionados.filter((_, i) => i !== index));
+  };
+
+  const totalCalculado = useMemo(() => {
+    const subManoObra = Number(manoDeObra.precioUnitario) || 0;
+    const subRepuestos = repuestosSeleccionados.reduce((acc, r) => {
+      return acc + ((Number(r.cantidad) || 0) * (Number(r.precioUnitario) || 0));
+    }, 0);
+    return subManoObra + subRepuestos;
+  }, [manoDeObra, repuestosSeleccionados]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(null);
+    setCargando(true);
 
-    // Validar que si eligió repuesto haya seleccionado un producto
-    const repuestoInvalido = detalles.some(d => d.tipo === 'Repuesto' && !d.productoId);
-    if (repuestoInvalido) {
-      setError('Por favor selecciona el repuesto correspondiente del catálogo para cada ítem de tipo Repuesto.');
+    const detalles = [];
+
+    // 1. Mano de obra si tiene monto
+    if (Number(manoDeObra.precioUnitario) > 0) {
+      detalles.push({
+        tipo: 'ManoDeObra',
+        descripcion: manoDeObra.descripcion,
+        cantidad: 1,
+        precioUnitario: parseFloat(manoDeObra.precioUnitario)
+      });
+    }
+
+    // 2. Repuestos
+    for (const r of repuestosSeleccionados) {
+      if (!r.productoId) {
+        toast.warning('Por favor completa todos los repuestos seleccionados');
+        setCargando(false);
+        return;
+      }
+      detalles.push({
+        tipo: 'Repuesto',
+        productoId: parseInt(r.productoId, 10),
+        descripcion: r.descripcion,
+        cantidad: parseInt(r.cantidad, 10),
+        precioUnitario: parseFloat(r.precioUnitario)
+      });
+    }
+
+    if (detalles.length === 0) {
+      toast.warning('La factura debe tener al menos un concepto (Mano de obra o Repuesto)');
+      setCargando(false);
       return;
     }
 
-    setGuardando(true);
-
     try {
-      const payload = {
-        ticketId: ticket.id,
-        clienteId: ticket.clienteId || ticket.cliente?.id,
-        descuento: Number(descuento),
-        observaciones,
-        detalles: detalles.map(d => ({
-          tipo: d.tipo,
-          productoId: d.productoId ? Number(d.productoId) : null,
-          descripcion: d.descripcion,
-          cantidad: Number(d.cantidad),
-          precioUnitario: Number(d.precioUnitario)
-        }))
-      };
-
-      await facturasService.crearFactura(payload);
+      await facturasService.generarDesdeTicket(ticket.id, { detalles });
       alFacturarExitoso();
       alCerrar();
     } catch (err) {
-      const msg = err.response?.data?.mensaje || err.response?.data || 'Error al emitir la factura.';
-      setError(msg);
+      const msg = err.response?.data?.mensaje || err.response?.data || 'Error al emitir factura';
+      toast.error(msg);
     } finally {
-      setGuardando(false);
+      setCargando(false);
     }
   };
 
   return (
-    <div style={styles.modalOverlay}>
-      <div style={styles.modalContent}>
-        <div style={styles.modalHeader}>
-          <h3 style={styles.modalTitle}>
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '640px' }}>
+        <div className="modal-header">
+          <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Receipt size={20} color="#0284c7" /> Emitir Factura - Ticket #{ticket.id}
           </h3>
-          <button onClick={alCerrar} style={styles.iconBtn}><X size={20} /></button>
+          <button onClick={alCerrar} className="btn-ghost-icon"><X size={20} /></button>
         </div>
 
-        {error && <div style={styles.error}>{error}</div>}
-
-        <div style={styles.infoBanner}>
-          <div>
-            <span style={styles.infoLabel}>Titular:</span>{' '}
-            <strong>{ticket.cliente?.nombre ? `${ticket.cliente.nombre} ${ticket.cliente.apellido || ''}` : `Cliente #${ticket.clienteId}`}</strong>
-          </div>
-          <div>
-            <span style={styles.infoLabel}>Vehículo:</span>{' '}
-            <strong>{ticket.vehiculo?.dominio || ticket.dominio || 'S/D'}</strong>
-            {(ticket.vehiculo?.marca || ticket.vehiculo?.modelo) && (
-              <span style={{ color: '#64748b', fontSize: '0.8rem', marginLeft: '4px' }}>
-                ({ticket.vehiculo?.marca} {ticket.vehiculo?.modelo})
-              </span>
-            )}
-          </div>
+        <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
+          <div>Vehículo: <strong>{ticket.vehiculo?.dominio || ticket.dominio || 'S/D'}</strong> ({ticket.vehiculo?.marca || ''} {ticket.vehiculo?.modelo || ''})</div>
+          <div>Titular: <strong>{ticket.cliente ? `${ticket.cliente.nombre} ${ticket.cliente.apellido}` : (ticket.nombreCompletoCliente || 'Particular')}</strong></div>
         </div>
 
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <div style={styles.tableCard}>
-            <table style={styles.table}>
-              <thead>
-                <tr style={styles.thRow}>
-                  <th style={{ ...styles.th, width: '120px' }}>Tipo</th>
-                  <th style={styles.th}>Descripción / Selección de Catálogo</th>
-                  <th style={{ ...styles.th, width: '70px', textAlign: 'center' }}>Cant.</th>
-                  <th style={{ ...styles.th, width: '110px' }}>P. Unit ($)</th>
-                  <th style={{ ...styles.th, width: '105px', textAlign: 'right' }}>Subtotal</th>
-                  <th style={{ ...styles.th, width: '40px' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {detalles.map((item, idx) => (
-                  <tr key={idx} style={styles.tr}>
-                    <td style={styles.td}>
-                      <select
-                        value={item.tipo}
-                        onChange={(e) => handleTipoChange(idx, e.target.value)}
-                        style={styles.selectCompact}
-                      >
-                        <option value="ManoDeObra">M. de Obra</option>
-                        <option value="Repuesto">Repuesto</option>
-                      </select>
-                    </td>
-
-                    <td style={styles.td}>
-                      {item.tipo === 'Repuesto' ? (
-                        <select
-                          required
-                          value={item.productoId || ''}
-                          onChange={(e) => handleProductoSelect(idx, e.target.value)}
-                          style={styles.selectCompact}
-                        >
-                          <option value="">-- Seleccionar Repuesto --</option>
-                          {productos.map(p => (
-                            <option key={p.id} value={p.id}>
-                              {p.codigo} - {p.nombre} (Stock: {p.stockActual})
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type="text"
-                          required
-                          placeholder="Descripción del trabajo"
-                          value={item.descripcion}
-                          onChange={(e) => actualizarItem(idx, 'descripcion', e.target.value)}
-                          style={styles.inputTable}
-                        />
-                      )}
-                    </td>
-
-                    <td style={styles.td}>
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.cantidad}
-                        onChange={(e) => actualizarItem(idx, 'cantidad', Math.max(1, parseInt(e.target.value, 10) || 1))}
-                        style={{ ...styles.inputTable, textAlign: 'center' }}
-                      />
-                    </td>
-
-                    <td style={styles.td}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={item.precioUnitario}
-                        onChange={(e) => actualizarItem(idx, 'precioUnitario', parseFloat(e.target.value) || 0)}
-                        style={styles.inputTable}
-                      />
-                    </td>
-
-                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
-                      ${(item.cantidad * item.precioUnitario).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                    </td>
-
-                    <td style={{ ...styles.td, textAlign: 'center' }}>
-                      {detalles.length > 1 && (
-                        <button type="button" onClick={() => eliminarItem(idx)} style={styles.deleteBtn}>
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {/* Mano de obra */}
+          <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', backgroundColor: '#ffffff' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0284c7', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+              Mano de Obra y Servicio
+            </div>
+            <div style={{ display: 'flex', gap: '0.65rem' }}>
+              <div style={{ flex: 3 }}>
+                <input
+                  type="text"
+                  value={manoDeObra.descripcion}
+                  onChange={(e) => setManoDeObra({ ...manoDeObra, descripcion: e.target.value })}
+                  placeholder="Detalle del servicio prestado..."
+                  className="form-input"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={manoDeObra.precioUnitario}
+                  onChange={(e) => setManoDeObra({ ...manoDeObra, precioUnitario: parseFloat(e.target.value) || 0 })}
+                  placeholder="Monto ($)"
+                  className="form-input"
+                  style={{ textAlign: 'right' }}
+                />
+              </div>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <button type="button" onClick={agregarItem} style={styles.btnAddRow}>
-              <Plus size={14} /> Agregar Concepto / Repuesto
-            </button>
-          </div>
-
-          <div style={styles.totalsGrid}>
-            <div style={styles.inputGroup}>
-              <label style={styles.label}>Observaciones / Condiciones:</label>
-              <textarea
-                placeholder="Detalles sobre garantía, forma de entrega, notas..."
-                value={observaciones}
-                onChange={(e) => setObservaciones(e.target.value)}
-                style={styles.textarea}
-              />
+          {/* Repuestos con buscador */}
+          <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem', backgroundColor: '#ffffff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0284c7', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Package size={15} /> Repuestos e Insumos Utilizados
+              </div>
+              <button
+                type="button"
+                onClick={agregarFilaRepuesto}
+                className="btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+              >
+                <Plus size={13} /> Agregar Repuesto
+              </button>
             </div>
 
-            <div style={styles.summaryCard}>
-              <div style={styles.summaryRow}>
-                <span style={{ color: '#64748b' }}>Subtotal:</span>
-                <strong style={{ color: '#334155' }}>${subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong>
-              </div>
-              <div style={styles.summaryRow}>
-                <span style={{ color: '#64748b' }}>Descuento:</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span>$</span>
+            {repuestosSeleccionados.length === 0 ? (
+              <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>No se agregaron repuestos a este comprobante.</p>
+            ) : (
+              repuestosSeleccionados.map((r, i) => (
+                <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <div style={{ flex: 3 }}>
+                    <SearchableSelect
+                      options={opcionesProductos}
+                      value={r.productoId}
+                      onChange={(val) => handleProductoChange(i, val)}
+                      placeholder="Buscar por código o nombre..."
+                      required
+                    />
+                  </div>
                   <input
                     type="number"
-                    min="0"
-                    step="0.01"
-                    value={descuento}
-                    onChange={(e) => setDescuento(e.target.value)}
-                    style={styles.inputDiscount}
+                    min="1"
+                    placeholder="Cant."
+                    value={r.cantidad}
+                    onChange={(e) => handleRepuestoFieldChange(i, 'cantidad', parseInt(e.target.value, 10) || 1)}
+                    className="form-input"
+                    style={{ width: '65px', textAlign: 'center' }}
                   />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="P. Unit"
+                    value={r.precioUnitario}
+                    onChange={(e) => handleRepuestoFieldChange(i, 'precioUnitario', parseFloat(e.target.value) || 0)}
+                    className="form-input"
+                    style={{ width: '95px', textAlign: 'right' }}
+                  />
+                  <button type="button" onClick={() => eliminarFilaRepuesto(i)} className="btn-ghost-icon">
+                    <Trash2 size={15} color="#ef4444" />
+                  </button>
                 </div>
-              </div>
-              <div style={{ ...styles.summaryRow, borderTop: '1px solid #cbd5e1', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-                <span style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a' }}>Total Final:</span>
-                <span style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0284c7' }}>
-                  ${total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-            </div>
+              ))
+            )}
           </div>
 
-          <div style={styles.modalActions}>
-            <button type="button" onClick={alCerrar} disabled={guardando} style={styles.btnSecondary}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '1.25rem', fontWeight: 800, color: '#0f172a' }}>
+            Total Comprobante: ${totalCalculado.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+          </div>
+
+          <div className="modal-actions">
+            <button type="button" onClick={alCerrar} className="btn-secondary" disabled={cargando}>
               Cancelar
             </button>
-            <button type="submit" disabled={guardando} style={styles.btnPrimary}>
-              <Receipt size={16} /> {guardando ? 'Generando Comprobante...' : 'Confirmar Facturación'}
+            <button type="submit" className="btn-primary" disabled={cargando || totalCalculado <= 0}>
+              {cargando ? 'Emitiendo...' : 'Emitir Factura'}
             </button>
           </div>
         </form>
@@ -291,35 +239,3 @@ export default function ModalFacturarTicket({ ticket, alCerrar, alFacturarExitos
     </div>
   );
 }
-
-const styles = {
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modalContent: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '1.5rem', width: '100%', maxWidth: '780px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15)' },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' },
-  modalTitle: { display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, fontSize: '1.25rem', fontWeight: '700', color: '#0f172a' },
-  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: '#64748b' },
-  error: { padding: '0.75rem 1rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.875rem' },
-  infoBanner: { display: 'flex', justifyContent: 'space-between', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.875rem', color: '#1e293b' },
-  infoLabel: { color: '#64748b', fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: '600' },
-  form: { display: 'flex', flexDirection: 'column', gap: '1rem' },
-  tableCard: { border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' },
-  thRow: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
-  th: { padding: '0.65rem 0.75rem', color: '#475569', fontWeight: '600', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  tr: { borderBottom: '1px solid #f1f5f9' },
-  td: { padding: '0.5rem 0.75rem', verticalAlign: 'middle' },
-  selectCompact: { width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', backgroundColor: '#ffffff', color: '#0f172a', outline: 'none' },
-  inputTable: { width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.5rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', color: '#0f172a', outline: 'none' },
-  deleteBtn: { background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem' },
-  btnAddRow: { display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#f0f9ff', color: '#0284c7', border: '1px solid #bae6fd', padding: '0.4rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' },
-  totalsGrid: { display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1rem', marginTop: '0.5rem' },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '0.25rem' },
-  label: { fontSize: '0.8rem', fontWeight: '600', color: '#334155' },
-  textarea: { boxSizing: 'border-box', width: '100%', height: '80px', padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', color: '#0f172a', outline: 'none', resize: 'none' },
-  summaryCard: { backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.45rem', justifyContent: 'center' },
-  summaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' },
-  inputDiscount: { width: '75px', padding: '0.25rem 0.4rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.85rem', textAlign: 'right' },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '0.65rem', borderTop: '1px solid #e2e8f0', paddingTop: '1rem', marginTop: '0.5rem' },
-  btnPrimary: { display: 'inline-flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#0284c7', color: '#ffffff', border: 'none', padding: '0.5rem 1.1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  btnSecondary: { backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' }
-};

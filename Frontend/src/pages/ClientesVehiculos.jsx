@@ -1,45 +1,82 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import api from '../api/axiosClient';
 import { useAuth } from '../context/AuthContext';
-import { Plus, RefreshCw, X, User, Car, Edit, Trash2, Phone, Mail, ShieldAlert } from 'lucide-react';
+import { 
+  Plus, 
+  RefreshCw, 
+  X, 
+  User, 
+  Car, 
+  Edit, 
+  Trash2, 
+  Phone, 
+  Mail, 
+  ShieldAlert, 
+  Search,
+  DollarSign,
+  Receipt,
+  CheckCircle2,
+  AlertCircle
+} from 'lucide-react';
+import { toast } from 'sonner';
+import ConfirmModal from '../components/ConfirmModal';
+import Pagination from '../components/Pagination';
 
 export default function ClientesVehiculos() {
   const { tieneRol } = useAuth();
-  
-  // Validamos si el usuario puede acceder a la pantalla (Operador o Admin)
   const tieneAccesoGeneral = tieneRol(['Operadores']);
-  // Validamos si el usuario tiene permiso destructivo (Solo Admin = array vacío)
   const esAdmin = tieneRol([]);
 
   const [clientes, setClientes] = useState([]);
   const [vehiculos, setVehiculos] = useState([]);
-  const [tabActiva, setTabActiva] = useState('clientes'); // 'clientes' | 'vehiculos'
+  const [facturas, setFacturas] = useState([]);
+  const [tickets, setTickets] = useState([]);
+  const [tabActiva, setTabActiva] = useState('clientes');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+
+  // Búsqueda y paginación
+  const [busqueda, setBusqueda] = useState('');
+  const [paginaActual, setPaginaActual] = useState(1);
+  const itemsPorPagina = 8;
 
   // Modales
   const [showModalCliente, setShowModalCliente] = useState(false);
   const [showModalVehiculo, setShowModalVehiculo] = useState(false);
   const [editandoCliente, setEditandoCliente] = useState(null);
   const [editandoVehiculo, setEditandoVehiculo] = useState(null);
+  const [clienteCuentaCorriente, setClienteCuentaCorriente] = useState(null);
+
+  const [confirmConfig, setConfirmConfig] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: null
+  });
 
   const [formCliente, setFormCliente] = useState({ nombre: '', apellido: '', dni: '', correo: '', telefono: '' });
   const [formVehiculo, setFormVehiculo] = useState({ clienteId: '', marca: '', modelo: '', año: 2022, dominio: '' });
 
-  const cargarTodo = async () => {
+  const cargarTodo = async (mostrarToast = false) => {
     if (!tieneAccesoGeneral) return;
     
     setLoading(true);
-    setError('');
     try {
-      const [resCli, resVeh] = await Promise.all([
+      const [resCli, resVeh, resFac, resTick] = await Promise.all([
         api.get('/clientes'),
-        api.get('/vehiculos')
+        api.get('/vehiculos'),
+        api.get('/facturas').catch(() => ({ data: [] })),
+        api.get('/tickets').catch(() => ({ data: [] }))
       ]);
-      setClientes(resCli.data);
-      setVehiculos(resVeh.data);
+      setClientes(resCli.data || []);
+      setVehiculos(resVeh.data || []);
+      setFacturas(resFac.data || []);
+      setTickets(resTick.data || []);
+
+      if (mostrarToast) {
+        toast.success('Padrón y cuentas corrientes actualizados');
+      }
     } catch {
-      setError('Error al sincronizar clientes y parque de vehículos.');
+      toast.error('Error al sincronizar clientes y saldos');
     } finally {
       setLoading(false);
     }
@@ -51,20 +88,81 @@ export default function ClientesVehiculos() {
     }
   }, [tieneAccesoGeneral]);
 
-  // Pantalla de bloqueo si entra un Técnico por URL directa
+  useEffect(() => {
+    setPaginaActual(1);
+  }, [busqueda, tabActiva]);
+
   if (!tieneAccesoGeneral) {
     return (
-      <div style={styles.deniedContainer}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', textAlign: 'center' }}>
         <ShieldAlert size={64} color="#ef4444" />
-        <h2 style={styles.deniedTitle}>Acceso Restringido</h2>
-        <p style={styles.deniedText}>
+        <h2 style={{ marginTop: '1rem', fontSize: '1.5rem', color: '#0f172a' }}>Acceso Restringido</h2>
+        <p style={{ color: '#64748b', marginTop: '0.5rem', maxWidth: '400px' }}>
           Tu perfil técnico no cuenta con permisos para gestionar el padrón de clientes y vehículos.
         </p>
       </div>
     );
   }
 
-  // Submit Cliente
+  // Mapa de deuda por cliente: { [clienteId]: { saldoTotal: number, facturas: [] } }
+  const mapaDeudaClientes = useMemo(() => {
+    const mapa = {};
+
+    facturas.forEach(f => {
+      if (f.estado === 'Anulada') return;
+      const saldo = Number(f.saldoPendiente || 0);
+
+      // Vincular cliente: puede venir directo en f.clienteId o deducirse del ticket asociado
+      let clienteId = f.clienteId;
+      if (!clienteId && f.ticketId) {
+        const t = tickets.find(x => x.id === f.ticketId);
+        clienteId = t?.clienteId || t?.cliente?.id;
+      }
+
+      if (clienteId) {
+        if (!mapa[clienteId]) {
+          mapa[clienteId] = { saldoTotal: 0, facturas: [] };
+        }
+        mapa[clienteId].saldoTotal += saldo;
+        if (saldo > 0) {
+          mapa[clienteId].facturas.push(f);
+        }
+      }
+    });
+
+    return mapa;
+  }, [facturas, tickets]);
+
+  // Filtrado reactivo
+  const clientesFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return clientes;
+    return clientes.filter(c => 
+      `${c.nombre} ${c.apellido}`.toLowerCase().includes(q) ||
+      String(c.dni || '').includes(q) ||
+      String(c.telefono || '').includes(q) ||
+      (c.correo && c.correo.toLowerCase().includes(q))
+    );
+  }, [clientes, busqueda]);
+
+  const vehiculosFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return vehiculos;
+    return vehiculos.filter(v => 
+      (v.dominio && v.dominio.toLowerCase().includes(q)) ||
+      (v.marca && v.marca.toLowerCase().includes(q)) ||
+      (v.modelo && v.modelo.toLowerCase().includes(q)) ||
+      (v.dueño && `${v.dueño.nombre} ${v.dueño.apellido}`.toLowerCase().includes(q)) ||
+      (v.nombreCompletoDueño && v.nombreCompletoDueño.toLowerCase().includes(q))
+    );
+  }, [vehiculos, busqueda]);
+
+  const listaActiva = tabActiva === 'clientes' ? clientesFiltrados : vehiculosFiltrados;
+  const itemsPaginados = useMemo(() => {
+    const inicio = (paginaActual - 1) * itemsPorPagina;
+    return listaActiva.slice(inicio, inicio + itemsPorPagina);
+  }, [listaActiva, paginaActual]);
+
   const handleSubmitCliente = async (e) => {
     e.preventDefault();
     try {
@@ -75,17 +173,18 @@ export default function ClientesVehiculos() {
       };
       if (editandoCliente) {
         await api.put(`/clientes/${editandoCliente.id}`, payload);
+        toast.success('Cliente actualizado con éxito');
       } else {
         await api.post('/clientes', payload);
+        toast.success('Cliente registrado con éxito');
       }
       setShowModalCliente(false);
       cargarTodo();
     } catch (err) {
-      alert(err.response?.data || 'Error al guardar cliente');
+      toast.error(err.response?.data || 'Error al guardar cliente');
     }
   };
 
-  // Submit Vehículo
   const handleSubmitVehiculo = async (e) => {
     e.preventDefault();
     try {
@@ -96,47 +195,67 @@ export default function ClientesVehiculos() {
       };
       if (editandoVehiculo) {
         await api.put(`/vehiculos/${editandoVehiculo.id}`, payload);
+        toast.success('Vehículo actualizado con éxito');
       } else {
         await api.post('/vehiculos', payload);
+        toast.success('Vehículo registrado con éxito');
       }
       setShowModalVehiculo(false);
       cargarTodo();
     } catch (err) {
-      alert(err.response?.data || 'Error al guardar vehículo');
+      toast.error(err.response?.data || 'Error al guardar vehículo');
     }
   };
 
-  const handleEliminarCliente = async (id) => {
+  const solicitarEliminarCliente = (cliente) => {
     if (!esAdmin) return;
-    if (!window.confirm('¿Confirmar baja del cliente?')) return;
-    try {
-      await api.delete(`/clientes/${id}`);
-      cargarTodo();
-    } catch (err) {
-      alert(err.response?.data || 'Error al eliminar');
-    }
+    setConfirmConfig({
+      isOpen: true,
+      title: 'Dar de baja cliente',
+      message: `¿Confirmar la eliminación de ${cliente.nombre} ${cliente.apellido}?`,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/clientes/${cliente.id}`);
+          toast.success('Cliente dado de baja exitosamente');
+          cargarTodo();
+        } catch (err) {
+          toast.error(err.response?.data || 'Error al eliminar cliente');
+        } finally {
+          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
   };
 
-  const handleEliminarVehiculo = async (id) => {
+  const solicitarEliminarVehiculo = (vehiculo) => {
     if (!esAdmin) return;
-    if (!window.confirm('¿Confirmar baja del vehículo?')) return;
-    try {
-      await api.delete(`/vehiculos/${id}`);
-      cargarTodo();
-    } catch (err) {
-      alert(err.response?.data || 'Error al eliminar');
-    }
+    setConfirmConfig({
+      isOpen: true,
+      title: 'Dar de baja vehículo',
+      message: `¿Confirmar la eliminación de la unidad patente ${vehiculo.dominio}?`,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/vehiculos/${vehiculo.id}`);
+          toast.success('Vehículo dado de baja exitosamente');
+          cargarTodo();
+        } catch (err) {
+          toast.error(err.response?.data || 'Error al eliminar vehículo');
+        } finally {
+          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
   };
 
   return (
-    <div>
-      <div style={styles.header}>
+    <div className="page-container">
+      <div className="page-header">
         <div>
-          <h1 style={styles.title}>Clientes y Parque Automotor</h1>
-          <p style={styles.subtitle}>Directorio general de clientes y unidades registradas</p>
+          <h1 className="page-title">Clientes y Parque Automotor</h1>
+          <p className="page-subtitle">Directorio de clientes, estados de cuenta y unidades registradas</p>
         </div>
-        <div style={styles.headerActions}>
-          <button onClick={cargarTodo} style={styles.btnSecondary}>
+        <div className="header-actions">
+          <button onClick={() => cargarTodo(true)} className="btn-secondary">
             <RefreshCw size={15} /> Refrescar
           </button>
           <button
@@ -151,261 +270,424 @@ export default function ClientesVehiculos() {
                 setShowModalVehiculo(true);
               }
             }}
-            style={styles.btnPrimary}
+            className="btn-primary"
           >
             <Plus size={16} /> {tabActiva === 'clientes' ? 'Nuevo Cliente' : 'Nuevo Vehículo'}
           </button>
         </div>
       </div>
 
-      {error && <div style={styles.error}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <div className="tabs-nav" style={{ margin: 0 }}>
+          <button
+            onClick={() => setTabActiva('clientes')}
+            className={`tab-btn ${tabActiva === 'clientes' ? 'tab-btn-active' : ''}`}
+          >
+            <User size={16} /> Clientes ({clientes.length})
+          </button>
+          <button
+            onClick={() => setTabActiva('vehiculos')}
+            className={`tab-btn ${tabActiva === 'vehiculos' ? 'tab-btn-active' : ''}`}
+          >
+            <Car size={16} /> Vehículos ({vehiculos.length})
+          </button>
+        </div>
 
-      {/* Tabs */}
-      <div style={styles.tabsWrapper}>
-        <button
-          onClick={() => setTabActiva('clientes')}
-          style={{ ...styles.tabButton, ...(tabActiva === 'clientes' ? styles.tabActive : {}) }}
-        >
-          <User size={16} /> Clientes ({clientes.length})
-        </button>
-        <button
-          onClick={() => setTabActiva('vehiculos')}
-          style={{ ...styles.tabButton, ...(tabActiva === 'vehiculos' ? styles.tabActive : {}) }}
-        >
-          <Car size={16} /> Vehículos ({vehiculos.length})
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '0.4rem 0.75rem', minWidth: '260px' }}>
+          <Search size={16} color="#64748b" />
+          <input
+            type="text"
+            placeholder={tabActiva === 'clientes' ? 'Buscar por nombre o DNI...' : 'Buscar patente o modelo...'}
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            style={{ border: 'none', outline: 'none', width: '100%', fontSize: '0.85rem' }}
+          />
+          {busqueda && (
+            <button onClick={() => setBusqueda('')} className="btn-ghost-icon" style={{ padding: 0 }}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div style={styles.card}>
+      <div className="ui-card">
         {loading ? (
-          <div style={styles.emptyState}>Cargando registros...</div>
+          <div className="empty-state">Cargando registros...</div>
+        ) : listaActiva.length === 0 ? (
+          <div className="empty-state">
+            {busqueda ? 'No se encontraron resultados coincidentes.' : 'No hay registros disponibles.'}
+          </div>
         ) : tabActiva === 'clientes' ? (
-          clientes.length === 0 ? (
-            <div style={styles.emptyState}>No hay clientes registrados.</div>
-          ) : (
-            <table style={styles.table}>
+          <div className="ui-table-container">
+            <table className="ui-table">
               <thead>
-                <tr style={styles.thRow}>
-                  <th style={styles.th}>Nombre y Apellido</th>
-                  <th style={styles.th}>DNI</th>
-                  <th style={styles.th}>Contacto</th>
-                  <th style={{ ...styles.th, textAlign: 'center' }}>Acciones</th>
+                <tr>
+                  <th>Nombre y Apellido</th>
+                  <th style={{ width: '120px' }}>DNI</th>
+                  <th>Contacto</th>
+                  <th style={{ width: '160px', textAlign: 'right' }}>Cuenta Corriente</th>
+                  <th style={{ width: '110px', textAlign: 'center' }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
-                {clientes.map((c, idx) => (
-                  <tr key={c.id} style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                    <td style={styles.td}>
-                      <div style={styles.cellFlex}>
-                        <User size={15} color="#0284c7" />
-                        <strong style={{ color: '#0f172a' }}>{c.nombre} {c.apellido}</strong>
-                      </div>
-                    </td>
-                    <td style={styles.td}>{c.dni}</td>
-                    <td style={styles.td}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '0.8rem' }}>
-                        {c.telefono ? <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#475569' }}><Phone size={12} /> {c.telefono}</span> : null}
-                        {c.correo ? <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#475569' }}><Mail size={12} /> {c.correo}</span> : null}
-                      </div>
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'center' }}>
-                      <button onClick={() => { setEditandoCliente(c); setFormCliente(c); setShowModalCliente(true); }} style={styles.actionBtn}>
-                        <Edit size={16} color="#0284c7" />
-                      </button>
-                      
-                      {/* SOLO EL ADMIN VE EL BOTÓN DE ELIMINAR */}
-                      {esAdmin && (
-                        <button onClick={() => handleEliminarCliente(c.id)} style={styles.actionBtn}>
-                          <Trash2 size={16} color="#ef4444" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {itemsPaginados.map((c) => {
+                  const datosDeuda = mapaDeudaClientes[c.id] || { saldoTotal: 0, facturas: [] };
+                  const tieneDeuda = datosDeuda.saldoTotal > 0;
+
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <User size={15} color="#0284c7" />
+                          <strong style={{ color: '#0f172a' }}>{c.nombre} {c.apellido}</strong>
+                        </div>
+                      </td>
+                      <td>{c.dni}</td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '0.8rem' }}>
+                          {c.telefono ? <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#475569' }}><Phone size={12} /> {c.telefono}</span> : null}
+                          {c.correo ? <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#475569' }}><Mail size={12} /> {c.correo}</span> : null}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {tieneDeuda ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '6px',
+                              backgroundColor: '#fef2f2',
+                              color: '#dc2626',
+                              border: '1px solid #fecaca',
+                              fontWeight: 700,
+                              fontSize: '0.825rem'
+                            }}>
+                              <AlertCircle size={13} /> ${datosDeuda.saldoTotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                            </span>
+                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
+                              {datosDeuda.facturas.length} comprobante(s)
+                            </span>
+                          </div>
+                        ) : (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '0.2rem 0.5rem',
+                            borderRadius: '6px',
+                            backgroundColor: '#ecfdf5',
+                            color: '#059669',
+                            border: '1px solid #a7f3d0',
+                            fontWeight: 600,
+                            fontSize: '0.825rem'
+                          }}>
+                            <CheckCircle2 size={13} /> Al día
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                          {/* Ver Estado de Cuenta */}
+                          <button
+                            onClick={() => setClienteCuentaCorriente({ cliente: c, ...datosDeuda })}
+                            className="btn-ghost-icon"
+                            title="Ver resumen de cuenta corriente"
+                          >
+                            <DollarSign size={16} color={tieneDeuda ? '#dc2626' : '#059669'} />
+                          </button>
+
+                          <button 
+                            onClick={() => { setEditandoCliente(c); setFormCliente(c); setShowModalCliente(true); }} 
+                            className="btn-ghost-icon"
+                            title="Editar Cliente"
+                          >
+                            <Edit size={16} color="#0284c7" />
+                          </button>
+                          
+                          {esAdmin && (
+                            <button 
+                              onClick={() => solicitarEliminarCliente(c)} 
+                              className="btn-ghost-icon"
+                              title="Eliminar Cliente"
+                            >
+                              <Trash2 size={16} color="#ef4444" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          )
+          </div>
         ) : (
-          vehiculos.length === 0 ? (
-            <div style={styles.emptyState}>No hay vehículos registrados en la base de datos.</div>
-          ) : (
-            <table style={styles.table}>
+          <div className="ui-table-container">
+            <table className="ui-table">
               <thead>
-                <tr style={styles.thRow}>
-                  <th style={styles.th}>Dominio</th>
-                  <th style={styles.th}>Marca y Modelo</th>
-                  <th style={styles.th}>Año</th>
-                  <th style={styles.th}>Titular / Dueño</th>
-                  <th style={{ ...styles.th, textAlign: 'center' }}>Acciones</th>
+                <tr>
+                  <th style={{ width: '130px' }}>Dominio</th>
+                  <th>Marca y Modelo</th>
+                  <th style={{ width: '90px' }}>Año</th>
+                  <th>Titular / Dueño</th>
+                  <th style={{ width: '90px', textAlign: 'center' }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
-                {vehiculos.map((v, idx) => (
-                  <tr key={v.id} style={{ ...styles.tr, backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                    <td style={styles.td}>
-                      <div style={styles.cellFlex}>
+                {itemsPaginados.map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <Car size={15} color="#0284c7" />
                         <strong style={{ color: '#0f172a' }}>{v.dominio}</strong>
                       </div>
                     </td>
-                    <td style={styles.td}>{v.marca} {v.modelo}</td>
-                    <td style={styles.td}>{v.año || '—'}</td>
-                    <td style={{ ...styles.td, fontWeight: '500', color: '#0f172a' }}>
+                    <td>{v.marca} {v.modelo}</td>
+                    <td>{v.año || '—'}</td>
+                    <td style={{ fontWeight: 500, color: '#0f172a' }}>
                       {v.dueño ? `${v.dueño.nombre} ${v.dueño.apellido}` : (v.nombreCompletoDueño || 'Sin titular')}
                     </td>
-                    <td style={{ ...styles.td, textAlign: 'center' }}>
-                      <button onClick={() => {
-                        setEditandoVehiculo(v);
-                        setFormVehiculo({
-                          clienteId: v.clienteId || v.dueño?.id || '',
-                          marca: v.marca,
-                          modelo: v.modelo,
-                          año: v.año,
-                          dominio: v.dominio
-                        });
-                        setShowModalVehiculo(true);
-                      }} style={styles.actionBtn}>
-                        <Edit size={16} color="#0284c7" />
-                      </button>
-
-                      {/* SOLO EL ADMIN VE EL BOTÓN DE ELIMINAR */}
-                      {esAdmin && (
-                        <button onClick={() => handleEliminarVehiculo(v.id)} style={styles.actionBtn}>
-                          <Trash2 size={16} color="#ef4444" />
+                    <td style={{ textAlign: 'center' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <button onClick={() => {
+                          setEditandoVehiculo(v);
+                          setFormVehiculo({
+                            clienteId: v.clienteId || v.dueño?.id || '',
+                            marca: v.marca,
+                            modelo: v.modelo,
+                            año: v.año,
+                            dominio: v.dominio
+                          });
+                          setShowModalVehiculo(true);
+                        }} className="btn-ghost-icon" title="Editar Vehículo">
+                          <Edit size={16} color="#0284c7" />
                         </button>
-                      )}
+
+                        {esAdmin && (
+                          <button onClick={() => solicitarEliminarVehiculo(v)} className="btn-ghost-icon" title="Eliminar Vehículo">
+                            <Trash2 size={16} color="#ef4444" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )
+          </div>
         )}
+
+        <Pagination
+          paginaActual={paginaActual}
+          totalItems={listaActiva.length}
+          itemsPorPagina={itemsPorPagina}
+          onCambioPagina={setPaginaActual}
+        />
       </div>
 
-      {/* MODAL CLIENTE */}
-      {showModalCliente && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <div style={styles.modalHeader}>
-              <h3 style={styles.modalTitle}><User size={18} color="#0284c7" /> {editandoCliente ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
-              <button onClick={() => setShowModalCliente(false)} style={styles.iconBtn}><X size={20} /></button>
+      {/* MODAL DE CUENTA CORRIENTE / RESUMEN DE DEUDA */}
+      {clienteCuentaCorriente && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '580px' }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <DollarSign size={20} color={clienteCuentaCorriente.saldoTotal > 0 ? '#dc2626' : '#059669'} />
+                <h3 className="modal-title">
+                  Estado de Cuenta: {clienteCuentaCorriente.cliente.nombre} {clienteCuentaCorriente.cliente.apellido}
+                </h3>
+              </div>
+              <button onClick={() => setClienteCuentaCorriente(null)} className="btn-ghost-icon"><X size={20} /></button>
             </div>
-            <form onSubmit={handleSubmitCliente} style={styles.form}>
-              <div style={styles.formRow}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Nombre</label>
-                  <input required value={formCliente.nombre} onChange={e => setFormCliente({ ...formCliente, nombre: e.target.value })} style={styles.input} />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Apellido</label>
-                  <input required value={formCliente.apellido} onChange={e => setFormCliente({ ...formCliente, apellido: e.target.value })} style={styles.input} />
-                </div>
-              </div>
-              <div style={styles.formRow}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>DNI</label>
-                  <input type="number" required value={formCliente.dni} onChange={e => setFormCliente({ ...formCliente, dni: e.target.value })} style={styles.input} />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Teléfono</label>
-                  <input type="number" value={formCliente.telefono} onChange={e => setFormCliente({ ...formCliente, telefono: e.target.value })} style={styles.input} />
+
+            <div style={{
+              backgroundColor: clienteCuentaCorriente.saldoTotal > 0 ? '#fef2f2' : '#ecfdf5',
+              border: `1px solid ${clienteCuentaCorriente.saldoTotal > 0 ? '#fecaca' : '#a7f3d0'}`,
+              borderRadius: '8px',
+              padding: '1rem',
+              marginBottom: '1rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <span style={{ fontSize: '0.8rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Saldo Deudor Total</span>
+                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: clienteCuentaCorriente.saldoTotal > 0 ? '#dc2626' : '#059669' }}>
+                  ${clienteCuentaCorriente.saldoTotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                 </div>
               </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Email</label>
-                <input type="email" value={formCliente.correo} onChange={e => setFormCliente({ ...formCliente, correo: e.target.value })} style={styles.input} />
+              <span className={`ui-badge ${clienteCuentaCorriente.saldoTotal > 0 ? 'ui-badge-warning' : 'ui-badge-success'}`} style={clienteCuentaCorriente.saldoTotal > 0 ? { backgroundColor: '#ffffff', color: '#dc2626', borderColor: '#fecaca' } : {}}>
+                {clienteCuentaCorriente.saldoTotal > 0 ? 'Con Deuda Pendiente' : 'Cuenta al Día'}
+              </span>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '0.5rem' }}>
+                Comprobantes con Saldo Pendiente
+              </span>
+              {clienteCuentaCorriente.facturas.length === 0 ? (
+                <div style={{ padding: '1rem', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                  Este cliente no registra comprobantes pendientes de pago.
+                </div>
+              ) : (
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                  <table className="ui-table">
+                    <thead>
+                      <tr>
+                        <th>N° Factura</th>
+                        <th>Fecha</th>
+                        <th style={{ textAlign: 'right' }}>Total</th>
+                        <th style={{ textAlign: 'right' }}>Saldo Adeudado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clienteCuentaCorriente.facturas.map((f) => (
+                        <tr key={f.id}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                              <Receipt size={14} color="#0284c7" />
+                              <strong>{f.numeroFactura}</strong>
+                            </div>
+                          </td>
+                          <td style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                            {f.fechaEmision ? new Date(f.fechaEmision).toLocaleDateString('es-AR') : '—'}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            ${Number(f.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>
+                            ${Number(f.saldoPendiente || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+              {clienteCuentaCorriente.saldoTotal > 0 && (
+                <button
+                  onClick={() => {
+                    setClienteCuentaCorriente(null);
+                    window.location.href = '/facturacion';
+                  }}
+                  className="btn-primary"
+                  style={{ backgroundColor: '#059669', borderColor: '#059669' }}
+                >
+                  <DollarSign size={15} /> Asentar Cobro en Facturación
+                </button>
+              )}
+              <button onClick={() => setClienteCuentaCorriente(null)} className="btn-secondary">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Alta/Edición Cliente */}
+      {showModalCliente && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '520px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <User size={18} color="#0284c7" /> {editandoCliente ? 'Editar Cliente' : 'Nuevo Cliente'}
+              </h3>
+              <button onClick={() => setShowModalCliente(false)} className="btn-ghost-icon"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleSubmitCliente} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div style={{ display: 'flex', gap: '0.65rem' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Nombre</label>
+                  <input required value={formCliente.nombre} onChange={e => setFormCliente({ ...formCliente, nombre: e.target.value })} className="form-input" />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Apellido</label>
+                  <input required value={formCliente.apellido} onChange={e => setFormCliente({ ...formCliente, apellido: e.target.value })} className="form-input" />
+                </div>
               </div>
-              <div style={styles.modalActions}>
-                <button type="button" onClick={() => setShowModalCliente(false)} style={styles.btnSecondary}>Cancelar</button>
-                <button type="submit" style={styles.btnPrimary}>Guardar</button>
+              <div style={{ display: 'flex', gap: '0.65rem' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">DNI</label>
+                  <input type="number" required value={formCliente.dni} onChange={e => setFormCliente({ ...formCliente, dni: e.target.value })} className="form-input" />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Teléfono</label>
+                  <input type="number" value={formCliente.telefono} onChange={e => setFormCliente({ ...formCliente, telefono: e.target.value })} className="form-input" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input type="email" value={formCliente.correo} onChange={e => setFormCliente({ ...formCliente, correo: e.target.value })} className="form-input" />
+              </div>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setShowModalCliente(false)} className="btn-secondary">Cancelar</button>
+                <button type="submit" className="btn-primary">Guardar</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* MODAL VEHICULO */}
+      {/* Modal Alta/Edición Vehículo */}
       {showModalVehiculo && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <div style={styles.modalHeader}>
-              <h3 style={styles.modalTitle}><Car size={18} color="#0284c7" /> {editandoVehiculo ? 'Editar Vehículo' : 'Nuevo Vehículo'}</h3>
-              <button onClick={() => setShowModalVehiculo(false)} style={styles.iconBtn}><X size={20} /></button>
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '520px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Car size={18} color="#0284c7" /> {editandoVehiculo ? 'Editar Vehículo' : 'Nuevo Vehículo'}
+              </h3>
+              <button onClick={() => setShowModalVehiculo(false)} className="btn-ghost-icon"><X size={20} /></button>
             </div>
-            <form onSubmit={handleSubmitVehiculo} style={styles.form}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Titular (Cliente)</label>
-                <select required value={formVehiculo.clienteId} onChange={e => setFormVehiculo({ ...formVehiculo, clienteId: e.target.value })} style={styles.select}>
+            <form onSubmit={handleSubmitVehiculo} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div className="form-group">
+                <label className="form-label">Titular (Cliente)</label>
+                <select required value={formVehiculo.clienteId} onChange={e => setFormVehiculo({ ...formVehiculo, clienteId: e.target.value })} className="form-select">
                   <option value="">-- Seleccionar Titular --</option>
                   {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} {c.apellido} (DNI: {c.dni})</option>)}
                 </select>
               </div>
-              <div style={styles.formRow}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Marca</label>
-                  <input required placeholder="Volkswagen, Ford..." value={formVehiculo.marca} onChange={e => setFormVehiculo({ ...formVehiculo, marca: e.target.value })} style={styles.input} />
+              <div style={{ display: 'flex', gap: '0.65rem' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Marca</label>
+                  <input required placeholder="Volkswagen, Ford..." value={formVehiculo.marca} onChange={e => setFormVehiculo({ ...formVehiculo, marca: e.target.value })} className="form-input" />
                 </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Modelo</label>
-                  <input required placeholder="Golf, Ranger..." value={formVehiculo.modelo} onChange={e => setFormVehiculo({ ...formVehiculo, modelo: e.target.value })} style={styles.input} />
-                </div>
-              </div>
-              <div style={styles.formRow}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Dominio / Patente</label>
-                  <input required placeholder="AF123ZZ" value={formVehiculo.dominio} onChange={e => setFormVehiculo({ ...formVehiculo, dominio: e.target.value.toUpperCase() })} style={styles.input} />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Año</label>
-                  <input type="number" required value={formVehiculo.año} onChange={e => setFormVehiculo({ ...formVehiculo, año: e.target.value })} style={styles.input} />
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Modelo</label>
+                  <input required placeholder="Golf, Ranger..." value={formVehiculo.modelo} onChange={e => setFormVehiculo({ ...formVehiculo, modelo: e.target.value })} className="form-input" />
                 </div>
               </div>
-              <div style={styles.modalActions}>
-                <button type="button" onClick={() => setShowModalVehiculo(false)} style={styles.btnSecondary}>Cancelar</button>
-                <button type="submit" style={styles.btnPrimary}>Guardar</button>
+              <div style={{ display: 'flex', gap: '0.65rem' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Dominio / Patente</label>
+                  <input required placeholder="AF123ZZ" value={formVehiculo.dominio} onChange={e => setFormVehiculo({ ...formVehiculo, dominio: e.target.value.toUpperCase() })} className="form-input" />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Año</label>
+                  <input type="number" required value={formVehiculo.año} onChange={e => setFormVehiculo({ ...formVehiculo, año: e.target.value })} className="form-input" />
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setShowModalVehiculo(false)} className="btn-secondary">Cancelar</button>
+                <button type="submit" className="btn-primary">Guardar</button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmText="Eliminar"
+        variant="danger"
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }
-
-const styles = {
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' },
-  title: { margin: 0, fontSize: '1.625rem', fontWeight: '700', color: '#0f172a', letterSpacing: '-0.025em' },
-  subtitle: { margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: '#64748b' },
-  headerActions: { display: 'flex', gap: '0.65rem' },
-  btnPrimary: { display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  btnSecondary: { display: 'flex', alignItems: 'center', gap: '0.45rem', backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 0.9rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer' },
-  tabsWrapper: { display: 'flex', gap: '0.5rem', marginBottom: '1rem' },
-  tabButton: { display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.55rem 1rem', borderRadius: '8px', border: '1px solid transparent', backgroundColor: 'transparent', color: '#64748b', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer' },
-  tabActive: { backgroundColor: '#ffffff', color: '#0284c7', border: '1px solid #e2e8f0', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)' },
-  actionBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: '0.35rem' },
-  card: { backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.07)', overflow: 'hidden' },
-  error: { padding: '0.75rem 1rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.875rem' },
-  emptyState: { padding: '3rem', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.875rem' },
-  thRow: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
-  th: { padding: '0.85rem 1rem', color: '#475569', fontWeight: '600', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  tr: { borderBottom: '1px solid #f1f5f9' },
-  td: { padding: '0.9rem 1rem', fontSize: '0.875rem', verticalAlign: 'middle' },
-  cellFlex: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
-  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: '#64748b' },
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modalContent: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '1.5rem', width: '100%', maxWidth: '520px', boxSizing: 'border-box' },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' },
-  modalTitle: { display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: '#0f172a', fontSize: '1.1rem' },
-  form: { display: 'flex', flexDirection: 'column', gap: '0.85rem' },
-  formRow: { display: 'flex', gap: '0.65rem' },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1, minWidth: 0 },
-  label: { fontSize: '0.8rem', fontWeight: '600', color: '#334155' },
-  input: { width: '100%', boxSizing: 'border-box', padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', outline: 'none' },
-  select: { width: '100%', boxSizing: 'border-box', padding: '0.5rem 0.65rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' },
-  deniedContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', textAlign: 'center' },
-  deniedTitle: { marginTop: '1rem', fontSize: '1.5rem', color: '#0f172a' },
-  deniedText: { color: '#64748b', marginTop: '0.5rem', maxWidth: '400px' }
-};

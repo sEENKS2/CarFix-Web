@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { Toaster } from 'sonner';
 import Login from './pages/Login';
 import MainLayout from './components/MainLayout';
 import Dashboard from './pages/Dashboard';
@@ -13,6 +14,8 @@ import SeguridadUsuarios from './pages/SeguridadUsuarios';
 import Tecnicos from './pages/Tecnicos';
 import Facturacion from './pages/Facturacion';
 import Inventario from './pages/Inventario';
+import Turnos from './pages/Turnos';
+import CajaDiaria from './pages/CajaDiaria';
 
 function RutaPrivada({ children }) {
   const token = localStorage.getItem('token');
@@ -22,6 +25,7 @@ function RutaPrivada({ children }) {
 export default function App() {
   return (
     <AuthProvider>
+      <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -46,6 +50,8 @@ export default function App() {
             <Route path="usuarios" element={<SeguridadUsuarios />} />
             <Route path="facturacion" element={<Facturacion />} />
             <Route path="inventario" element={<Inventario />} />
+            <Route path="turnos" element={<Turnos />} />
+            <Route path="caja" element={<CajaDiaria />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
