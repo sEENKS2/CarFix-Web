@@ -18,13 +18,17 @@ import {
   AlertTriangle,
   DollarSign,
   Search,
-  FileText
+  FileText,
+  Sparkles
 } from 'lucide-react';
 import ModalFacturarTicket from '../components/ModalFacturarTicket';
 import { toast } from 'sonner';
 import { exportToCsv } from '../utils/exportUtils';
 import Pagination from '../components/Pagination';
 import { generarPdfRemitoIngreso } from '../utils/pdfGenerator';
+import { iaService } from '../api/iaService';
+import ModalDiagnosticoIA from '../components/ModalDiagnosticoIA';
+import MantenimientoPredictivoCard from '../components/MantenimientoPredictivoCard';
 
 export default function Tickets() {
   const { tieneRol } = useAuth();
@@ -36,6 +40,7 @@ export default function Tickets() {
   const [vehiculos, setVehiculos] = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [facturas, setFacturas] = useState([]);
+  const [productos, setProductos] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Búsqueda y Paginación
@@ -48,6 +53,11 @@ export default function Tickets() {
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
   const [historialVehiculo, setHistorialVehiculo] = useState([]);
   const [alertaEntrega, setAlertaEntrega] = useState(null);
+
+  // Estados de IA
+  const [modalIAAbierto, setModalIAAbierto] = useState(false);
+  const [analizandoIA, setAnalizandoIA] = useState(false);
+  const [resultadoIA, setResultadoIA] = useState(null);
 
   const [showModal, setShowModal] = useState(false);
   const [editandoId, setEditandoId] = useState(null);
@@ -87,18 +97,20 @@ export default function Tickets() {
 
     setLoading(true);
     try {
-      const [resTickets, resClientes, resVehiculos, resTecnicos, resFacturas] = await Promise.all([
+      const [resTickets, resClientes, resVehiculos, resTecnicos, resFacturas, resProductos] = await Promise.all([
         api.get('/tickets'),
         api.get('/clientes').catch(() => ({ data: [] })),
         api.get('/vehiculos').catch(() => ({ data: [] })),
         api.get('/tecnicos').catch(() => ({ data: [] })),
-        api.get('/facturas').catch(() => ({ data: [] }))
+        api.get('/facturas').catch(() => ({ data: [] })),
+        api.get('/productos').catch(() => ({ data: [] }))
       ]);
       setTickets(resTickets.data || []);
       setClientes(resClientes.data || []);
       setVehiculos(resVehiculos.data || []);
       setTecnicos(resTecnicos.data || []);
       setFacturas(resFacturas.data || []);
+      setProductos(resProductos.data || []);
 
       if (mostrarToast) {
         toast.success('Órdenes de trabajo actualizadas');
@@ -135,7 +147,6 @@ export default function Tickets() {
     return 'Sin Asignar';
   };
 
-  // Filtrado reactivo multivariable
   const ticketsFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     if (!q) return tickets;
@@ -180,6 +191,96 @@ export default function Tickets() {
       estado: parseEstado(t.estado)
     });
     setShowModal(true);
+  };
+
+  // Disparador del análisis con IA
+  const handleEjecutarDiagnosticoIA = async () => {
+    if (!formData.descripcion.trim()) {
+      toast.warning('Ingresa la descripción de la falla para que la IA pueda analizar los síntomas.');
+      return;
+    }
+
+    const vehiculoSeleccionado = vehiculos.find(v => v.id === parseInt(formData.vehiculoId, 10)) || {};
+
+    setModalIAAbierto(true);
+    setAnalizandoIA(true);
+    setResultadoIA(null);
+
+    try {
+      const respuesta = await iaService.analizarSintomas({
+        sintomas: formData.descripcion,
+        vehiculo: vehiculoSeleccionado,
+        productosDisponibles: productos
+      });
+      setResultadoIA(respuesta);
+    } catch {
+      toast.error('No se pudo conectar con el servicio de Inteligencia Artificial');
+      setModalIAAbierto(false);
+    } finally {
+      setAnalizandoIA(false);
+    }
+  };
+
+  // Aplicar informe completo de IA al formulario del Ticket
+  const handleAplicarSugerenciasIA = (diagnostico, repuestosElegidosIds) => {
+    const nombresRepuestos = productos
+      .filter(p => repuestosElegidosIds.includes(p.id))
+      .map(p => `${p.nombre} (${p.codigo}) - Stock: ${p.stockActual} u.`);
+
+    // 1. Hipótesis
+    const bloqueHipotesis = diagnostico.hipotesis && diagnostico.hipotesis.length > 0
+      ? diagnostico.hipotesis.map((h, i) => 
+          `  ${i + 1}. ${h.falla} [${h.probabilidad}%]\n     Detalle: ${h.justificacion}`
+        ).join('\n\n')
+      : '  Sin hipótesis registradas.';
+
+    // 2. Protocolo
+    const bloqueProtocolo = diagnostico.protocoloInspeccion && diagnostico.protocoloInspeccion.length > 0
+      ? diagnostico.protocoloInspeccion.map((paso) => `  [ ] ${paso}`).join('\n')
+      : '  Revisión técnica general en elevador.';
+
+    // 3. Repuestos en stock
+    const bloqueRepuestosStock = nombresRepuestos.length > 0
+      ? nombresRepuestos.map(r => `  • [Stock] ${r}`).join('\n')
+      : '  Sin repuestos asignados del depósito.';
+
+    // 4. Repuestos faltantes a comprar
+    const bloqueRepuestosFaltantes = diagnostico.repuestosFaltantes && diagnostico.repuestosFaltantes.length > 0
+      ? diagnostico.repuestosFaltantes.map(r => `  • [A PEDIR] ${r}`).join('\n')
+      : '  No se detectaron faltantes a encargar.';
+
+    // Horas estimadas
+    const tiempoEstimado = diagnostico.estimacionHorasManoObra 
+      ? `${diagnostico.estimacionHorasManoObra} hs` 
+      : 'A evaluar por mecánico';
+
+    const informeCompletoIA = `
+
+==================================================
+        INFORME DE PRE-DIAGNÓSTICO ASISTIDO (IA)
+==================================================
+TIEMPO ESTIMADO DE TRABAJO: ${tiempoEstimado}
+
+POSIBLES CAUSAS IDENTIFICADAS:
+${bloqueHipotesis}
+
+PROTOCOLO DE INSPECCIÓN RECOMENDADO:
+${bloqueProtocolo}
+
+REPUESTOS EN DEPÓSITO:
+${bloqueRepuestosStock}
+
+REPUESTOS A ENCARGAR (SIN STOCK):
+${bloqueRepuestosFaltantes}
+==================================================`;
+
+    setFormData(prev => ({
+      ...prev,
+      descripcion: (prev.descripcion.trim() + informeCompletoIA).trim()
+    }));
+
+    setModalIAAbierto(false);
+    toast.success('Diagnóstico, insumos y tiempos integrados al ticket');
   };
 
   const handleSubmit = async (e) => {
@@ -326,7 +427,7 @@ export default function Tickets() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Tickets de Taller</h1>
-          <p className="page-subtitle">Gestión y seguimiento de órdenes de servicio en tiempo real</p>
+          <p className="page-subtitle">Gestión operativa con diagnóstico asistido por Inteligencia Artificial</p>
         </div>
         <div className="header-actions">
           <button onClick={handleExportarExcel} className="btn-secondary" title="Descargar reporte en formato Excel / CSV">
@@ -371,16 +472,16 @@ export default function Tickets() {
           </div>
         ) : (
           <div className="ui-table-container">
-            <table className="ui-table">
+            <table className="ui-table" style={{ width: '100%' }}>
               <thead>
                 <tr>
-                  <th style={{ width: '60px' }}>Nro</th>
+                  <th style={{ width: '50px', textAlign: 'center' }}>Nro</th>
                   <th style={{ width: '22%' }}>Vehículo</th>
-                  <th style={{ width: '18%' }}>Cliente</th>
-                  <th style={{ width: '18%' }}>Mecánico</th>
+                  <th style={{ width: '16%' }}>Cliente</th>
+                  <th style={{ width: '16%' }}>Mecánico</th>
                   <th>Falla Reportada</th>
-                  <th style={{ width: '150px' }}>Estado</th>
-                  <th style={{ width: '210px', textAlign: 'center' }}>Acciones</th>
+                  <th style={{ width: '140px' }}>Estado</th>
+                  <th style={{ width: '120px', textAlign: 'center' }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -405,16 +506,16 @@ export default function Tickets() {
 
                   return (
                     <tr key={t.id}>
-                      <td>
-                        <strong style={{ color: '#0f172a' }}>#{t.id}</strong>
+                      <td style={{ textAlign: 'center' }}>
+                        <strong style={{ color: '#0f172a', fontSize: '0.85rem' }}>#{t.id}</strong>
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <Car size={14} color="#64748b" style={{ flexShrink: 0 }} />
-                          <div style={{ whiteSpace: 'nowrap' }}>
-                            <strong style={{ color: '#0f172a' }}>{dominio}</strong>
+                          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={`${dominio} ${marcaModelo ? `(${marcaModelo})` : ''}`}>
+                            <strong style={{ color: '#0f172a', fontSize: '0.85rem' }}>{dominio}</strong>
                             {marcaModelo && (
-                              <span style={{ color: '#64748b', fontSize: '0.8rem', marginLeft: '4px' }}>
+                              <span style={{ color: '#64748b', fontSize: '0.78rem', marginLeft: '4px' }}>
                                 ({marcaModelo})
                               </span>
                             )}
@@ -422,52 +523,52 @@ export default function Tickets() {
                         </div>
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <User size={14} color="#0284c7" style={{ flexShrink: 0 }} />
-                          <span style={{ fontWeight: '500', color: '#0f172a', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: '500', color: '#0f172a', fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={clienteNombre}>
                             {clienteNombre}
                           </span>
                         </div>
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}>
                           <span style={{
                             display: 'inline-flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            width: '24px',
-                            height: '24px',
+                            width: '22px',
+                            height: '22px',
                             borderRadius: '50%',
                             backgroundColor: '#eff6ff',
                             color: '#0284c7',
-                            fontSize: '0.75rem',
+                            fontSize: '0.72rem',
                             fontWeight: '700',
                             flexShrink: 0
                           }}>
                             {(tecnicoNombre[0] || 'T').toUpperCase()}
                           </span>
-                          <strong style={{ fontSize: '0.85rem', color: '#1e293b' }}>
+                          <strong style={{ fontSize: '0.82rem', color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={tecnicoNombre}>
                             {tecnicoNombre}
                           </strong>
                         </div>
                       </td>
-                      <td style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#475569' }} title={t.descripcion}>
+                      <td style={{ maxWidth: '170px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: '#475569', fontSize: '0.82rem' }} title={t.descripcion}>
                         {t.descripcion || '—'}
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <select
                             value={estadoId}
                             onChange={(e) => handleCambiarEstado(t, parseInt(e.target.value, 10))}
                             style={{
-                              padding: '0.3rem 0.55rem',
+                              padding: '0.25rem 0.45rem',
                               border: `1px solid ${estadoInfo.border}`,
                               borderRadius: '6px',
-                              fontSize: '0.78rem',
+                              fontSize: '0.75rem',
                               fontWeight: '600',
                               cursor: 'pointer',
                               outline: 'none',
-                              minWidth: '135px',
+                              width: '100%',
                               backgroundColor: estadoInfo.bg,
                               color: estadoInfo.text
                             }}
@@ -479,50 +580,109 @@ export default function Tickets() {
                             <option value={4} style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Entregado</option>
                           </select>
                           {tieneDeuda && estadoId !== 4 && (
-                            <span title={`Saldo pendiente: $${facturaTicket.saldoPendiente.toLocaleString('es-AR')}`}>
-                              <DollarSign size={15} color="#dc2626" />
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                toast.info(`Factura ${facturaTicket.numeroFactura}: Saldo pendiente de $${facturaTicket.saldoPendiente.toLocaleString('es-AR')}`);
+                                window.location.href = '/facturacion';
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '4px',
+                                borderRadius: '6px',
+                                border: '1px solid #fecaca',
+                                backgroundColor: '#fef2f2',
+                                color: '#dc2626',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease'
+                              }}
+                              title={`Factura ${facturaTicket.numeroFactura} con saldo pendiente: $${facturaTicket.saldoPendiente.toLocaleString('es-AR')}. Clic para ir a cobrar.`}
+                            >
+                              <DollarSign size={14} />
+                            </button>
                           )}
                         </div>
                       </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+                      <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                          {/* Ver Detalle */}
                           <button
                             onClick={() => handleVerDetalle(t)}
-                            className="btn-icon-action"
-                            title="Ver detalle completo"
+                            style={{
+                              padding: '5px',
+                              borderRadius: '6px',
+                              border: '1px solid #e2e8f0',
+                              backgroundColor: '#ffffff',
+                              color: '#475569',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}
+                            title="Ver detalle del ticket"
                           >
-                            <Eye size={13} /> Detalle
+                            <Eye size={15} />
                           </button>
 
+                          {/* Remito PDF */}
                           <button
                             onClick={() => {
                               generarPdfRemitoIngreso(t);
-                              toast.success(`Remito de Ingreso generado para Ticket #${t.id}`);
+                              toast.success(`Remito generado para Ticket #${t.id}`);
                             }}
-                            className="btn-icon-action"
-                            title="Descargar Remito de Recepción (Check-in con firma)"
+                            style={{
+                              padding: '5px',
+                              borderRadius: '6px',
+                              border: '1px solid #bae6fd',
+                              backgroundColor: '#f0f9ff',
+                              color: '#0284c7',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}
+                            title="Descargar Remito de Ingreso"
                           >
-                            <FileText size={13} color="#0284c7" /> Remito
+                            <FileText size={15} />
                           </button>
 
+                          {/* Facturar (solo si aplica) */}
                           {esFacturable && puedeCrearOEliminar && (
                             <button
                               onClick={() => setTicketParaFacturar(t)}
-                              className="btn-success-action"
+                              style={{
+                                padding: '5px',
+                                borderRadius: '6px',
+                                border: '1px solid #bbf7d0',
+                                backgroundColor: '#f0fdf4',
+                                color: '#16a34a',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center'
+                              }}
                               title="Emitir Factura"
                             >
-                              <Receipt size={13} /> Facturar
+                              <Receipt size={15} />
                             </button>
                           )}
 
+                          {/* Editar */}
                           {puedeCrearOEliminar && (
                             <button
                               onClick={() => abrirModalEditar(t)}
-                              className="btn-ghost-icon"
-                              title="Modificar ticket"
+                              style={{
+                                padding: '5px',
+                                borderRadius: '6px',
+                                border: '1px solid transparent',
+                                backgroundColor: 'transparent',
+                                color: '#0284c7',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center'
+                              }}
+                              title="Editar Ticket"
                             >
-                              <Edit size={15} color="#0284c7" />
+                              <Edit size={15} />
                             </button>
                           )}
                         </div>
@@ -628,10 +788,10 @@ export default function Tickets() {
         </div>
       )}
 
-      {/* MODAL DETALLE DE TICKET */}
+      {/* MODAL DETALLE DE TICKET CON TARJETA PREDICTIVA */}
       {ticketSeleccionado && (
         <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '640px' }}>
+          <div className="modal-content" style={{ maxWidth: '680px' }}>
             <div className="modal-header">
               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Wrench size={20} color="#0284c7" /> Detalle del Ticket #{ticketSeleccionado.id}
@@ -693,11 +853,16 @@ export default function Tickets() {
               </div>
 
               <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem' }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>Descripción Inicial / Falla Reportada</div>
+                <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>Descripción / Diagnóstico Registrado</div>
                 <p style={{ margin: 0, fontSize: '0.875rem', color: '#1e293b', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
                   {ticketSeleccionado.descripcion || 'Sin descripción ingresada.'}
                 </p>
               </div>
+
+              {/* Salud Predictiva IA del Vehículo */}
+              <MantenimientoPredictivoCard 
+                vehiculoId={ticketSeleccionado.vehiculoId || ticketSeleccionado.vehiculo?.id} 
+              />
 
               <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem 1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', fontWeight: '700', color: '#0284c7', textTransform: 'uppercase', marginBottom: '0.35rem' }}>
@@ -762,10 +927,10 @@ export default function Tickets() {
         </div>
       )}
 
-      {/* MODAL ALTA/EDICIÓN DE TICKET */}
+      {/* MODAL ALTA/EDICIÓN DE TICKET CON ASISTENTE IA */}
       {(showModal && puedeCrearOEliminar) && (
         <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '580px' }}>
+          <div className="modal-content" style={{ maxWidth: '640px' }}>
             <div className="modal-header">
               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Wrench size={20} color="#0284c7" /> {editandoId ? `Modificar Ticket #${editandoId}` : 'Registrar Ingreso a Taller'}
@@ -852,15 +1017,42 @@ export default function Tickets() {
                 )}
               </div>
 
+              {/* Falla con disparador de IA y Textarea expandido */}
               <div className="form-group">
-                <label className="form-label">Falla / Motivo de Ingreso</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Falla / Motivo de Ingreso</label>
+                  <button
+                    type="button"
+                    onClick={handleEjecutarDiagnosticoIA}
+                    className="btn-secondary"
+                    style={{
+                      padding: '0.2rem 0.55rem',
+                      fontSize: '0.75rem',
+                      color: '#0284c7',
+                      borderColor: '#bae6fd',
+                      backgroundColor: '#f0f9ff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                    title="Analizar síntomas con Procesamiento de Lenguaje Natural"
+                  >
+                    <Sparkles size={13} color="#0284c7" /> Analizar con IA
+                  </button>
+                </div>
                 <textarea
                   required
-                  placeholder="Ej: Revisión por vibración en frenado a más de 80 km/h..."
+                  placeholder="Ej: El cliente escucha un zumbido al acelerar en ruta y siente vibración en el volante a más de 80 km/h..."
                   value={formData.descripcion}
                   onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
                   className="form-textarea"
-                  style={{ minHeight: '60px', resize: 'vertical' }}
+                  style={{
+                    minHeight: '170px',
+                    resize: 'vertical',
+                    fontFamily: 'monospace',
+                    fontSize: '0.82rem',
+                    lineHeight: '1.45'
+                  }}
                 />
               </div>
 
@@ -871,6 +1063,16 @@ export default function Tickets() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* MODAL ASISTENTE IA DE PRE-DIAGNÓSTICO */}
+      {modalIAAbierto && (
+        <ModalDiagnosticoIA
+          resultado={resultadoIA}
+          cargando={analizandoIA}
+          alCerrar={() => setModalIAAbierto(false)}
+          alAplicarSugerencias={handleAplicarSugerenciasIA}
+        />
       )}
 
       {ticketParaFacturar && (

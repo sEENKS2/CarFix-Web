@@ -10,6 +10,7 @@ namespace Entidades.Tickets
         private string modelo;
         private int año;
         private string dominio;
+        private int kilometraje;
         private Cliente dueño;
 
         [Key] public int Id { get => id; set => id = value; }
@@ -17,6 +18,7 @@ namespace Entidades.Tickets
         public string Modelo { get => modelo; set => modelo = value; }
         public int Año { get => año; set => año = value; }
         public string Dominio { get => dominio; set => dominio = value; }
+        public int Kilometraje { get => kilometraje; set => kilometraje = value; }
         public Cliente Dueño { get => dueño; set => dueño = value; }
         public int ClienteId { get; set; }
         [ForeignKey("ClienteId")]

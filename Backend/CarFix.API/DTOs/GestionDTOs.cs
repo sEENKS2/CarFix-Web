@@ -16,6 +16,7 @@
         public string Modelo { get; set; } = string.Empty;
         public int Año { get; set; }
         public string Dominio { get; set; } = string.Empty;
+        public int Kilometraje { get; set; }
     }
 
     public class CrearUsuarioDTO

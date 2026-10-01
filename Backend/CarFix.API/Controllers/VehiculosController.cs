@@ -31,7 +31,7 @@ namespace CarFix.API.Controllers
         {
             try
             {
-                _gestor.AgregarVehiculo(dto.ClienteId, dto.Marca, dto.Modelo, dto.Año, dto.Dominio.ToUpper());
+                _gestor.AgregarVehiculo(dto.ClienteId, dto.Marca, dto.Modelo, dto.Año, dto.Dominio.ToUpper(), dto.Kilometraje);
                 return Ok(new { mensaje = "Vehículo registrado con éxito" });
             }
             catch (Exception ex)
@@ -45,7 +45,7 @@ namespace CarFix.API.Controllers
         {
             try
             {
-                _gestor.ModificarVehiculo(id, dto.ClienteId, dto.Marca, dto.Modelo, dto.Año, dto.Dominio.ToUpper());
+                _gestor.ModificarVehiculo(id, dto.ClienteId, dto.Marca, dto.Modelo, dto.Año, dto.Dominio.ToUpper(), dto.Kilometraje);
                 return Ok(new { mensaje = "Vehículo modificado con éxito" });
             }
             catch (Exception ex)

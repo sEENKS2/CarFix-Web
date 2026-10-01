@@ -1,7 +1,9 @@
+using CarFix.API.Services.IA;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
+using Microsoft.OpenApi.Models;
 using System.Text;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,28 +27,34 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "CarFix API", Version = "v1" });
-    c.CustomSchemaIds(type => type.FullName);
+    c.SwaggerDoc("v1", new OpenApiInfo 
+    { 
+        Title = "CarFix API", 
+        Version = "v1" 
+    });
 
-    // Definir el esquema Bearer
-    var securityScheme = new OpenApiSecurityScheme
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
+        Description = "Autenticación JWT usando el esquema Bearer. Ejemplo: \"Bearer {token}\"",
         Name = "Authorization",
-        Description = "Ingresá tu Token JWT directamente.",
         In = ParameterLocation.Header,
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT"
-    };
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
 
-    c.AddSecurityDefinition("Bearer", securityScheme);
-
-    // Pasamos el requerimiento como delegado lambda
-    c.AddSecurityRequirement(doc => new OpenApiSecurityRequirement
+    // El error CS1660 ocurre si pasas una lambda; debe ser la instancia de OpenApiSecurityRequirement:
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
-            new OpenApiSecuritySchemeReference("Bearer"),
-            new List<string>()
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
         }
     });
 });
@@ -71,6 +79,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
+
+// Registrar HttpClient y el servicio de IA
+//builder.Services.AddHttpClient<IIaService, GeminiIaService>();
+
+builder.Services.AddHttpClient<IIaService, OllamaIaService>();
 
 var app = builder.Build();
 

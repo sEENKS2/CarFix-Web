@@ -43,7 +43,7 @@ namespace Controladora
             }
         }
 
-        public void AgregarVehiculo(int clienteId, string marca, string modelo, int año, string dominio)
+        public void AgregarVehiculo(int clienteId, string marca, string modelo, int año, string dominio, int kilometraje)
         {
             var cliente = context.Clientes.Find(clienteId);
 
@@ -58,14 +58,15 @@ namespace Controladora
                 Marca = marca,
                 Modelo = modelo,
                 Año = año,
-                Dominio = dominio
+                Dominio = dominio,
+                Kilometraje = kilometraje
             };
 
             context.Vehiculos.Add(vehiculo);
             context.SaveChanges();
         }
 
-        public void ModificarVehiculo(int vehiculoID, int clienteId, string marca, string modelo, int año, string dominio)
+        public void ModificarVehiculo(int vehiculoID, int clienteId, string marca, string modelo, int año, string dominio, int kilometraje)
         {
             var vehiculo = context.Vehiculos.Find(vehiculoID);
 
@@ -86,6 +87,7 @@ namespace Controladora
             vehiculo.Modelo = modelo;
             vehiculo.Año = año;
             vehiculo.Dominio = dominio;
+            vehiculo.Kilometraje = kilometraje;
 
             context.SaveChanges();
         }

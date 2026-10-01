@@ -16,7 +16,8 @@ import {
   DollarSign,
   Receipt,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Gauge
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ConfirmModal from '../components/ConfirmModal';
@@ -54,7 +55,7 @@ export default function ClientesVehiculos() {
   });
 
   const [formCliente, setFormCliente] = useState({ nombre: '', apellido: '', dni: '', correo: '', telefono: '' });
-  const [formVehiculo, setFormVehiculo] = useState({ clienteId: '', marca: '', modelo: '', año: 2022, dominio: '' });
+  const [formVehiculo, setFormVehiculo] = useState({ clienteId: '', marca: '', modelo: '', año: '', dominio: '', kilometraje: '' });
 
   const cargarTodo = async (mostrarToast = false) => {
     if (!tieneAccesoGeneral) return;
@@ -83,16 +84,15 @@ export default function ClientesVehiculos() {
   };
 
   useEffect(() => {
-    if (tieneAccesoGeneral) {
-      cargarTodo();
-    }
+    if (!tieneAccesoGeneral) return;
+    cargarTodo();
   }, [tieneAccesoGeneral]);
 
   useEffect(() => {
     setPaginaActual(1);
   }, [busqueda, tabActiva]);
 
-  // Mapa de deuda por cliente (Hooks siempre arriba de los returns)
+  // Mapa de deuda por cliente
   const mapaDeudaClientes = useMemo(() => {
     const mapa = {};
 
@@ -150,7 +150,6 @@ export default function ClientesVehiculos() {
     return listaActiva.slice(inicio, inicio + itemsPorPagina);
   }, [listaActiva, paginaActual]);
 
-  // Early return por permisos colocado DESPUÉS de todos los Hooks
   if (!tieneAccesoGeneral) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', textAlign: 'center' }}>
@@ -191,7 +190,8 @@ export default function ClientesVehiculos() {
       const payload = {
         ...formVehiculo,
         clienteId: parseInt(formVehiculo.clienteId, 10),
-        año: parseInt(formVehiculo.año, 10)
+        año: parseInt(formVehiculo.año, 10),
+        kilometraje: parseInt(formVehiculo.kilometraje, 10) || 0
       };
       if (editandoVehiculo) {
         await api.put(`/vehiculos/${editandoVehiculo.id}`, payload);
@@ -266,7 +266,7 @@ export default function ClientesVehiculos() {
                 setShowModalCliente(true);
               } else {
                 setEditandoVehiculo(null);
-                setFormVehiculo({ clienteId: '', marca: '', modelo: '', año: 2022, dominio: '' });
+                setFormVehiculo({ clienteId: '', marca: '', modelo: '', año: '', dominio: '', kilometraje: '' });
                 setShowModalVehiculo(true);
               }
             }}
@@ -427,9 +427,10 @@ export default function ClientesVehiculos() {
             <table className="ui-table">
               <thead>
                 <tr>
-                  <th style={{ width: '130px' }}>Dominio</th>
+                  <th style={{ width: '120px' }}>Dominio</th>
                   <th>Marca y Modelo</th>
-                  <th style={{ width: '90px' }}>Año</th>
+                  <th style={{ width: '80px' }}>Año</th>
+                  <th style={{ width: '140px' }}>Kilometraje</th>
                   <th>Titular / Dueño</th>
                   <th style={{ width: '90px', textAlign: 'center' }}>Acciones</th>
                 </tr>
@@ -445,6 +446,22 @@ export default function ClientesVehiculos() {
                     </td>
                     <td>{v.marca} {v.modelo}</td>
                     <td>{v.año || '—'}</td>
+                    <td>
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '0.2rem 0.45rem',
+                        borderRadius: '6px',
+                        backgroundColor: '#f1f5f9',
+                        color: '#334155',
+                        fontSize: '0.8rem',
+                        fontWeight: '600'
+                      }}>
+                        <Gauge size={13} color="#64748b" />
+                        {(v.kilometraje ?? 0).toLocaleString('es-AR')} km
+                      </span>
+                    </td>
                     <td style={{ fontWeight: 500, color: '#0f172a' }}>
                       {v.dueño ? `${v.dueño.nombre} ${v.dueño.apellido}` : (v.nombreCompletoDueño || 'Sin titular')}
                     </td>
@@ -457,7 +474,8 @@ export default function ClientesVehiculos() {
                             marca: v.marca,
                             modelo: v.modelo,
                             año: v.año,
-                            dominio: v.dominio
+                            dominio: v.dominio,
+                            kilometraje: v.kilometraje ?? 0
                           });
                           setShowModalVehiculo(true);
                         }} className="btn-ghost-icon" title="Editar Vehículo">
@@ -668,6 +686,18 @@ export default function ClientesVehiculos() {
                   <label className="form-label">Año</label>
                   <input type="number" required value={formVehiculo.año} onChange={e => setFormVehiculo({ ...formVehiculo, año: e.target.value })} className="form-input" />
                 </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Kilometraje Actual (km)</label>
+                <input 
+                  type="number" 
+                  min="0" 
+                  required 
+                  placeholder="Ej: 85000" 
+                  value={formVehiculo.kilometraje} 
+                  onChange={e => setFormVehiculo({ ...formVehiculo, kilometraje: e.target.value })} 
+                  className="form-input" 
+                />
               </div>
               <div className="modal-actions">
                 <button type="button" onClick={() => setShowModalVehiculo(false)} className="btn-secondary">Cancelar</button>
